@@ -1,0 +1,26 @@
+# binari driver proprietari — non ridistribuibili (vedi README per come ottenerli)
+*.dll
+*.cab
+*.cat
+*.inf
+
+# VM e immagini di sistema
+vm/
+*.iso
+*.qcow2
+
+# repo di terzi clonati per riferimento
+EgisTec-EH576/
+libfprint/
+libfprint-egismoc-sdcp/
+
+# catture e output
+traces/
+*.pcapng
+*.bin
+*.pgm
+*.png
+__pycache__/
+
+# PoC di terzi, non ridistribuito
+egismoc-1c7a-0582.py
