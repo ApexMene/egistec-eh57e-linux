@@ -46,6 +46,9 @@ struct _FpiDeviceEgis057e
      and two inline arrays of 3990 doubles come to 62 KB on their own. */
   gdouble   *background;
   gboolean   have_background;
+  /* Media del fondo, tenuta a parte: serve a togliere lo scostamento uniforme
+     in frame_distance, e ricalcolarla a ogni fotogramma sarebbe sprecato. */
+  gdouble    bg_mean;
   gint       bg_used;
 
   Egis057ePhase phase;
@@ -218,15 +221,38 @@ correlate (const gint8 *a, const gint8 *b)
   return best;
 }
 
-/* Mean absolute distance from the learned background: 2.4 to 4 with nothing on
- * the sensor, 55 to 98 with a finger. */
+/*
+ * Distanza media assoluta dal fondo, tolto lo scostamento uniforme.
+ *
+ * La prima versione confrontava i pixel cosi' com'erano, e il 19/08 si e' piantata
+ * in modo istruttivo: durante una sessione di verifiche il livello a sensore
+ * libero e' passato da 3.9 a 22-29 e non e' piu' sceso, quindi la fase che
+ * aspetta il dito staccato non si e' piu' chiusa e il driver e' diventato sordo.
+ * La stessa cosa aveva fermato la prima iscrizione a sei appoggi su venti.
+ *
+ * Non era una deriva lenta ma un gradino, e di quelli che spostano tutta
+ * l'immagine della stessa quantita': un cambio di livello continuo dello stadio
+ * analogico, non un cambio di trama. Confrontando i pixel dopo aver tolto la
+ * differenza fra la media del fotogramma e quella del fondo, quel gradino sparisce
+ * per costruzione.
+ *
+ * Costa poco: sulle catture del 18/08, con dito il minimo resta 27.0 e senza dito
+ * il massimo 25.8 (mediana 3.9). Alla soglia di 15 nessuno dei 5616 fotogrammi
+ * con dito finisce sotto, e uno solo dei 984 liberi finisce sopra.
+ */
 static gdouble
 frame_distance (FpiDeviceEgis057e *self)
 {
-  gdouble sum = 0.0;
+  gdouble media = 0.0, sum = 0.0, scarto;
 
   for (gint i = 0; i < EGIS057E_IMGSIZE; i++)
-    sum += fabs ((gdouble) self->buf[i] - self->background[i]);
+    media += self->buf[i];
+  media /= EGIS057E_IMGSIZE;
+
+  scarto = media - self->bg_mean;
+
+  for (gint i = 0; i < EGIS057E_IMGSIZE; i++)
+    sum += fabs ((gdouble) self->buf[i] - scarto - self->background[i]);
 
   return sum / EGIS057E_IMGSIZE;
 }
@@ -371,8 +397,13 @@ capture_run_state (FpiSsm *ssm, FpDevice *dev)
 
           if (self->bg_used >= EGIS057E_BG_FRAMES)
             {
+              self->bg_mean = 0.0;
               for (gint i = 0; i < EGIS057E_IMGSIZE; i++)
-                self->background[i] = self->accum[i] / self->bg_used;
+                {
+                  self->background[i] = self->accum[i] / self->bg_used;
+                  self->bg_mean += self->background[i];
+                }
+              self->bg_mean /= EGIS057E_IMGSIZE;
               self->have_background = TRUE;
               fpi_ssm_mark_completed (ssm);
             }

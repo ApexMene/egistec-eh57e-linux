@@ -17,6 +17,7 @@ W, H = 70, 57
 DITA = ["indice-dx", "medio-dx", "anulare-dx", "pollice-dx", "indice-sx"]
 QUI = os.path.dirname(os.path.abspath(__file__))
 RADICE = os.path.dirname(QUI)
+DATI = os.path.join(RADICE, "data")
 
 INCHIOSTRO = "#e6e6e6"
 FONDO = "#0d1117"
@@ -35,12 +36,12 @@ plt.rcParams.update({
 
 
 def fondo():
-    return np.fromfile(f"{RADICE}/set-fondo.bin",
+    return np.fromfile(f"{DATI}/set-fondo.bin",
                        dtype=np.uint8).astype(np.float64).reshape(H, W)
 
 
 def appoggio(nome, n, bg, soglia=25.0):
-    a = np.fromfile(f"{RADICE}/set-{nome}-{n}.bin", dtype=np.uint8)
+    a = np.fromfile(f"{DATI}/set-{nome}-{n}.bin", dtype=np.uint8)
     f = a[:len(a) // (W * H) * (W * H)].reshape(-1, H, W).astype(np.float64) - bg
     return f[np.abs(f).mean(axis=(1, 2)) > soglia]
 
@@ -135,7 +136,7 @@ def fig_soglia(bg):
     libero, dito = [], []
     for d in DITA:
         for n in (1, 2, 3):
-            a = np.fromfile(f"{RADICE}/set-{d}-{n}.bin", dtype=np.uint8)
+            a = np.fromfile(f"{DATI}/set-{d}-{n}.bin", dtype=np.uint8)
             f = a[:len(a) // (W * H) * (W * H)]
             f = f.reshape(-1, H, W).astype(np.float64) - bg
             dist = np.abs(f).mean(axis=(1, 2))

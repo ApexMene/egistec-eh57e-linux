@@ -15,9 +15,17 @@ la finestra iniziale con finestre prese piu' avanti, contro modelli costruiti
 dagli ALTRI appoggi dello stesso dito.
 """
 
+import os
+import sys
+
+# Le catture stanno in data/, e questo file sta due livelli sotto la radice.
+RADICE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DATI = os.path.join(RADICE, "data")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import numpy as np
 
-from analisi import DITA, H, PIX, W, campioni, carica, filtra, somiglianza
+from matching_protocol import DITA, H, PIX, W, campioni, carica, filtra, somiglianza
 
 MEDIA = 40
 SCORR = 8
@@ -28,7 +36,7 @@ def finestra(f, inizio):
 
 
 def main():
-    bg = np.fromfile("set-fondo.bin", dtype=np.uint8).astype(np.float64)
+    bg = np.fromfile(os.path.join(DATI, "set-fondo.bin"), dtype=np.uint8).astype(np.float64)
     bg = bg.reshape(H, W)
 
     print(f"{'dito':12s} {'appoggio':>8s} {'inizio':>8s} {'meta':>8s} {'fine':>8s}")
@@ -36,7 +44,7 @@ def main():
     tutti = {"inizio": [], "meta": [], "fine": []}
 
     for d in DITA:
-        f = {n: carica(f"set-{d}-{n}.bin", bg) for n in (1, 2, 3)}
+        f = {n: carica(os.path.join(DATI, f"set-{d}-{n}.bin"), bg) for n in (1, 2, 3)}
 
         for n in (1, 2, 3):
             # I modelli vengono dagli altri due appoggi: confrontare un appoggio

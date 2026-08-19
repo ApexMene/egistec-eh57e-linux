@@ -17,6 +17,14 @@ sull'identita'; sopra c'e' il rumore termico. Senza il filtro il margine fra
 stesso dito e dita diverse si chiude quasi del tutto.
 """
 
+import os
+import sys
+
+# Le catture stanno in data/, e questo file sta due livelli sotto la radice.
+RADICE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DATI = os.path.join(RADICE, "data")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import argparse
 import itertools
 
@@ -90,16 +98,16 @@ def main():
                     help="scorrimento massimo in pixel")
     a = ap.parse_args()
 
-    bg = np.fromfile("set-fondo.bin", dtype=np.uint8).astype(np.float64)
+    bg = np.fromfile(os.path.join(DATI, "set-fondo.bin"), dtype=np.uint8).astype(np.float64)
     bg = bg.reshape(H, W)
 
     iscritti, prove = {}, {}
     for d in DITA:
         m = []
         for n in (1, 2):
-            m += campioni(carica(f"set-{d}-{n}.bin", bg), a.modelli, a.media)
+            m += campioni(carica(os.path.join(DATI, f"set-{d}-{n}.bin"), bg), a.modelli, a.media)
         iscritti[d] = m
-        prove[d] = campioni(carica(f"set-{d}-3.bin", bg), a.prove, a.media)
+        prove[d] = campioni(carica(os.path.join(DATI, f"set-{d}-3.bin"), bg), a.prove, a.media)
         print(f"{d:12s} modelli {len(m):3d}   prove {len(prove[d])}")
 
     print("\npunteggi (riga = dito iscritto, colonna = dito presentato)\n")
