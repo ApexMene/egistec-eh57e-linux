@@ -46,3 +46,11 @@ enroll_debug*.log
 
 # eccezione: le figure del README sono generate e vanno pubblicate
 !docs/*.png
+
+# spazio di lavoro non pubblicabile
+scratch/
+vendor/
+data/
+logs/
+__pycache__/
+vm/
