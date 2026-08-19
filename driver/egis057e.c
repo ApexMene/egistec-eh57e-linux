@@ -62,6 +62,10 @@ struct _FpiDeviceEgis057e
 
   gint       init_idx;
 
+  /* Appoggi rifiutati di fila perche' troppo simili: azzerato a ogni
+     appoggio accettato. */
+  gint       rejected;
+
   /* enrolment in progress */
   GPtrArray *templates;         /* of gint8*, one per placement */
   gint       stage;
@@ -639,6 +643,51 @@ enroll_stage_done (FpiSsm *ssm, FpDevice *dev, GError *error)
       fpi_device_enroll_complete (dev, NULL, error);
       return;
     }
+
+  /*
+   * Un appoggio che somiglia troppo a uno gia' preso non porta niente.
+   *
+   * L'unica leva misurata che alza i punteggi genuini e' il numero di appoggi
+   * DISTINTI: uno da' 0.143, due 0.288, mentre quadruplicare i fotogrammi dello
+   * stesso appoggio non cambia nulla. Con quindici millimetri quadri di finestra,
+   * trenta appoggi tutti sullo stesso punto valgono quanto uno.
+   *
+   * Chiedere trenta appoggi senza controllare che siano diversi lascia quindi
+   * all'utente il compito di ricordarsi di spostare il dito, e il costo di
+   * dimenticarsene si paga dopo, come rifiuti in verifica.
+   *
+   * Sopra la soglia si chiede di rifare, con CENTER_FINGER, che e' il codice che
+   * fprintd e GNOME traducono in "sposta un po' il dito".
+   *
+   * Il contatore serve a non incastrare nessuno: dopo qualche tentativo
+   * l'appoggio si prende comunque. Un'iscrizione che non finisce e' peggio di
+   * un'iscrizione un po' ridondante.
+   */
+  if (self->templates->len > 0 && self->rejected < EGIS057E_ENROLL_MAX_RETRIES)
+    {
+      gdouble simile = -1.0;
+
+      for (guint i = 0; i < self->templates->len; i++)
+        {
+          gdouble v = correlate (self->sample,
+                                 g_ptr_array_index (self->templates, i));
+          if (v > simile)
+            simile = v;
+        }
+
+      if (simile >= EGIS057E_ENROLL_MAX_SIMILARITY)
+        {
+          self->rejected++;
+          fp_dbg ("appoggio troppo simile a uno gia' preso (%.3f), si rifa'",
+                  simile);
+          fpi_device_enroll_progress (dev, self->stage, NULL,
+                                      fpi_device_retry_new (FP_DEVICE_RETRY_CENTER_FINGER));
+          enroll_next (dev);
+          return;
+        }
+    }
+
+  self->rejected = 0;
 
   tpl = g_memdup2 (self->sample, EGIS057E_IMGSIZE);
   g_ptr_array_add (self->templates, tpl);

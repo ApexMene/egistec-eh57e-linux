@@ -131,6 +131,26 @@
  * parallele e con piu' liberta' si allineano con chiunque.
  */
 #define EGIS057E_NR_ENROLL_STAGES 30
+/*
+ * Sopra questa somiglianza un appoggio e' considerato una ripetizione di uno
+ * gia' preso e in iscrizione si chiede di rifarlo.
+ *
+ * Il valore viene dai dati del 18/08: sullo stesso dito, appoggi realmente
+ * diversi danno fra 0.229 e 0.816, mentre due prelievi dallo STESSO appoggio
+ * stanno sopra 0.9 (la differenza fra inizio, centro e fine di un appoggio e'
+ * 0.015). Fra le due popolazioni 0.85 e' largo: lascia passare tutto quello che
+ * e' spostato davvero e ferma solo il dito rimesso identico.
+ *
+ * Non e' una soglia di sicurezza e non ha niente a che vedere con
+ * EGIS057E_MATCH_THRESHOLD: sbagliarla costa qualche appoggio in piu' o qualche
+ * modello ridondante, non un accesso indebito.
+ */
+#define EGIS057E_ENROLL_MAX_SIMILARITY 0.85
+
+/* Dopo tanti rifiuti di fila l'appoggio si prende comunque: un'iscrizione che
+   non finisce e' peggio di una un po' ridondante. */
+#define EGIS057E_ENROLL_MAX_RETRIES 4
+
 #define EGIS057E_MATCH_THRESHOLD  0.50
 #define EGIS057E_MAX_SHIFT        8
 
