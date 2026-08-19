@@ -78,7 +78,7 @@ in English.
 | `fprintd-verify` | ✅ `verify-match` |
 | PAM (GDM, lock screen, `sudo`) | ✅ via `authselect` |
 | Rejection rate | ⚠️ needs work — see [Known limitations](#known-limitations) |
-| Permanent installation | ⚠️ `fprintd` must currently be started by hand |
+| Permanent installation | ✅ systemd drop-in, survives reboot |
 
 ## Starting point
 
@@ -311,11 +311,56 @@ fprintd-verify -f right-index-finger
 suspends the laptop. Lift between placements and move the finger a little each
 time — it is the *distinct* placements that count.
 
+### Installing permanently
+
+`scripts/install.sh` puts the built library in `/usr/local/lib/egis057e` and
+adds a systemd drop-in so `fprintd` finds it, without overwriting the
+distribution's own copy:
+
+```sh
+sudo scripts/install.sh
+```
+
+`/usr/local/lib` rather than a home directory because SELinux in `Enforcing`
+denies a confined service loading a library from `/home`; there, `restorecon`
+applies the right label and no denials are logged.
+
+To undo it:
+
+```sh
+sudo rm -rf /usr/local/lib/egis057e
+sudo rm /etc/systemd/system/fprintd.service.d/egis057e.conf
+sudo systemctl daemon-reload && sudo systemctl restart fprintd
+```
+
 For PAM, enable the feature the distribution already ships:
 
 ```sh
 sudo authselect enable-feature with-fingerprint
 ```
+
+### Reading the scores
+
+While the threshold is still being tuned, it is worth having the driver log what
+it actually measured. Add to the drop-in:
+
+```
+Environment=G_MESSAGES_DEBUG=libfprint-egis057e
+```
+
+then
+
+```sh
+journalctl -u fprintd -f | grep correlation
+```
+
+A rejection and a near-miss look identical from the outside, and the difference
+decides whether the fix is a better enrolment or a different threshold.
+
+**One thing worth knowing as a user:** the driver averages about half a second
+of continuous contact before it decides. A quick tap gives it a poor sample and
+is the most likely cause of a rejection that feels arbitrary. Rest the finger,
+count to two, lift.
 
 ## Known limitations
 
@@ -328,9 +373,6 @@ sudo authselect enable-feature with-fingerprint
   margin between different fingers is not wide enough for one-against-many.
 - **No udev rule** is emitted for `1c7a:057e`; `fprintd` runs as root, so it has
   not been needed so far.
-- **Installation is not permanent.** `fprintd` must be launched by hand. With
-  SELinux in `Enforcing`, pointing a system service at a library under `/home`
-  would produce denials.
 - **No anti-spoofing.** The matcher only looks at ridge texture.
 
 ## Roadmap
