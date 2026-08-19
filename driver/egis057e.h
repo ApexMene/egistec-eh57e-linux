@@ -151,7 +151,33 @@
    non finisce e' peggio di una un po' ridondante. */
 #define EGIS057E_ENROLL_MAX_RETRIES 4
 
-#define EGIS057E_MATCH_THRESHOLD  0.50
+/*
+ * Soglia 0.55.
+ *
+ * Lo 0.50 di partenza era stato tarato su catture con il 42% dei pixel in
+ * saturazione, dove genuini e impostori si sovrapponevano e nessuna soglia
+ * funzionava: si era scelto il male minore. Corretto il guadagno (vedi
+ * EGIS057E_GAIN_VALUE) le due popolazioni si separano.
+ *
+ * Tutte le osservazioni sul ferro al guadagno corretto, 19/08, due iscrizioni
+ * distinte da trenta appoggi:
+ *
+ *   genuini    0.585  0.672  0.704  0.757  0.817  0.854  0.947
+ *   impostori  0.497  0.508  0.520
+ *
+ * Fra 0.520 e 0.585 c'e' un corridoio vuoto. 0.55 ci sta in mezzo.
+ *
+ * Un primo tentativo a 0.65 era stato tarato sui soli tre genuini della prima
+ * sessione, tutti sopra 0.81, e rifiutava lo 0.585 della seconda: e' il modo
+ * classico di cucire una soglia sui dati che si hanno sottomano invece che
+ * sulla popolazione.
+ *
+ * Dieci osservazioni non misurano un tasso di errore, e il margine e' di 65
+ * millesimi, sottile. Inoltre l'impostore provato e' il medio della stessa mano,
+ * che e' quello che somiglia di piu' e quindi il caso peggiore per il rifiuto ma
+ * non per la sicurezza: un dito di un'altra persona non e' mai stato provato.
+ */
+#define EGIS057E_MATCH_THRESHOLD  0.55
 #define EGIS057E_MAX_SHIFT        8
 
 /*
@@ -196,7 +222,30 @@
  */
 #define EGIS057E_REG_GAIN   0x12
 #define EGIS057E_REG_OFFSET 0x0f
-#define EGIS057E_GAIN_VALUE   0x0a
+/*
+ * Guadagno 0x01, non 0x0a.
+ *
+ * Il valore era stato messo a 0x0a perche' a 0x00 il dito non si vedeva, e li'
+ * ci si era fermati. Ma quella prova era stata fatta PRIMA di sistemare
+ * l'offset: la manopola girata era quella sbagliata, e una volta portato
+ * l'offset a 0x20 il guadagno alto non serviva piu' a niente.
+ *
+ * Misurato il 19/08 con il dito fermo, spazzolando tutti i guadagni a offset
+ * 0x20 (research/tuning/exposure-sweep.py):
+ *
+ *   guadagno 0x00   satura  0.0%   SNR 19.9 dB
+ *   guadagno 0x01   satura  1.9%   SNR 20.2 dB   <- massimo
+ *   guadagno 0x04   satura 24.0%   SNR 19.1 dB
+ *   guadagno 0x0a   satura 42.5%   SNR 16.2 dB   <- quello che si usava
+ *   guadagno 0x0f   satura 49.8%   SNR 14.5 dB
+ *
+ * A 0x0a quasi meta' dei pixel di ogni immagine arrivava tagliata a 0 o a 255.
+ * Informazione distrutta all'acquisizione, che nessun confronto puo'
+ * recuperare, e distrutta proprio dove il segnale e' forte: quello che
+ * sopravvive e' dominato da dove il dito preme, cioe' dalla componente che
+ * tutte le dita hanno in comune.
+ */
+#define EGIS057E_GAIN_VALUE   0x01
 #define EGIS057E_OFFSET_VALUE 0x20
 
 /*

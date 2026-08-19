@@ -168,7 +168,39 @@ So the driver does not hand an image to libfprint. It implements its own matcher
    and says nothing about identity; above it is thermal noise. The result is
    normalised to unit variance and quantised to `int8`.
 4. **Matching.** Normalised cross-correlation, maximised over all shifts up to
-   ±8 pixels. Acceptance threshold **0.50**.
+   ±8 pixels. Acceptance threshold **0.55**.
+
+### Exposure: the mistake that cost the most
+
+The analog gain was originally set to `0x0a`, because at `0x00` the finger was
+not visible. That test was run *before* the offset was fixed — the wrong knob was
+turned, and once the offset was set to `0x20` the high gain was no longer needed.
+Nobody went back to re-measure.
+
+Sweeping the gain with a finger held still, at offset `0x20`:
+
+| gain | saturated pixels | ridge-band SNR |
+|---|---|---|
+| `0x00` | 0.0% | 19.9 dB |
+| **`0x01`** | **1.9%** | **20.2 dB** |
+| `0x04` | 24.0% | 19.1 dB |
+| `0x0a` | **42.5%** | 16.2 dB |
+| `0x0f` | 49.8% | 14.5 dB |
+
+**Between a quarter and three quarters of every image was arriving clipped** to 0
+or 255. That is information destroyed at acquisition, which no matcher can
+recover, and destroyed exactly where the signal is strong — so what survived was
+dominated by *where the finger presses*, which is the component every finger has
+in common.
+
+The consequence was a real false accept: an unenrolled middle finger scored 0.526
+and 0.633 against an enrolled index, above the threshold of the time. After the
+correction, on the same pair: index 0.728, middle 0.303.
+
+The general lesson, and it is the most expensive one in this repository: **an
+acquisition parameter is chosen by measuring what it destroys, not by stopping at
+the first value where the image becomes visible.** Four different matching
+algorithms were tried and rejected before anyone measured the images themselves.
 
 ### Measurements
 
@@ -182,10 +214,25 @@ how well something resembles itself.
 
 </div>
 
-Genuine 0.241 – 0.767, impostors up to 0.451. No false accepts at 0.50.
+Genuine 0.241 – 0.767, impostors up to 0.451.
 
-> ⚠️ Twenty cross-finger comparisons are **not** a false-acceptance rate. That
-> would take thousands. This only says the method separates, not how well.
+> ⚠️ **These offline figures were measured on saturated captures** (gain `0x0a`),
+> before the exposure problem above was found. They are kept because they
+> document the reasoning, but every conclusion drawn from that dataset — including
+> the rejections of BLPOC, mosaicking, peak sharpness and T-norm — was reached on
+> damaged signal and is due to be re-measured.
+>
+> Twenty cross-finger comparisons are also **not** a false-acceptance rate. That
+> would take thousands.
+
+On hardware, after the exposure fix, across two separate 30-placement enrolments:
+
+    genuine    0.585  0.672  0.704  0.757  0.817  0.854  0.947
+    impostor   0.497  0.508  0.520
+
+The gap between 0.520 and 0.585 is where the threshold sits. Ten observations do
+not measure an error rate, the margin is 65 thousandths, and the only impostor
+ever presented was the same person's middle finger — never another person's.
 
 ### Why it needs many placements
 
@@ -364,10 +411,11 @@ count to two, lift.
 
 ## Known limitations
 
-- **Rejections.** On the first real verification run the scores were 0.625, 0.595
-  and **0.358**: one below threshold. The measured remedy is more distinct
-  placements at enrolment, hence 30 stages. Lowering the threshold is not, since
-  0.358 sits below the measured impostor ceiling.
+- **The threshold rests on ten observations** with a margin of 0.065. It is the
+  honest reading of what was seen, not a guarantee.
+- **No other person's finger has ever been presented to this sensor.** Every
+  impostor measurement is a different finger of the same hand, which is the
+  easiest impostor to reject.
 - **No serious FAR measurement.** See above.
 - **No `identify`.** The driver advertises only `FP_DEVICE_FEATURE_VERIFY`: the
   margin between different fingers is not wide enough for one-against-many.

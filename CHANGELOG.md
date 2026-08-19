@@ -1684,3 +1684,174 @@ README rifatto: banner e figure generate da `docs/figure.py` a partire dalle
 catture vere di `set-*.bin`, non da illustrazioni. Compresa quella che mostra i
 tre appoggi dello stesso dito uno accanto all'altro, che rende evidente in un
 colpo d'occhio perche' servono trenta iscrizioni e non venti.
+
+---
+
+## 19/08/2026, 16:00-17:30 — il falso accesso, e la causa vera
+
+### Il difetto
+
+Con l'iscrizione a trenta appoggi installata come servizio, il **medio destro
+non iscritto e' stato accettato come indice destro**, due volte su due: 0.526 e
+0.633 contro una soglia di 0.50.
+
+Le due popolazioni, dalla stessa iscrizione:
+
+    indice destro (iscritto)     0.517  0.563  0.881
+    medio destro (non iscritto)  0.526  0.633
+
+Si sovrappongono. Nessuna soglia le separa.
+
+### Quattro tentativi di riparare l'algoritmo, tutti falliti
+
+Prima di trovare la causa ho provato a cambiare il confronto. Sono partito dal
+presupposto che il problema fosse li', e ho sbagliato bersaglio quattro volte di
+seguito. Vale la pena registrarlo perche' ogni tentativo sembrava ragionevole.
+
+**Mosaicking.** E' quello che la letteratura raccomanda per i sensori di piccola
+area: fondere gli appoggi in un unico composito invece di tenerli separati.
+
+    modelli separati, +-8    genuino peggiore 0.279  impostore migliore 0.516  1/25
+    modelli separati, +-30   genuino peggiore 0.514  impostore migliore 0.754  2/25
+    mosaico, +-30            genuino peggiore 0.334  impostore migliore 0.765  3/25
+
+Il controllo a parita' di raggio e' quello che rende la conclusione affidabile:
+il mosaico perde anche quando i due metodi hanno la stessa liberta', quindi non
+e' un artefatto della tela piu' grande. Il motivo si vede nelle fusioni stesse:
+la soglia di aggancio non cambia niente fra 0.35 e 0.65, cioe' la correlazione
+restituisce un picco alto anche quando allinea male, e mediare pezzi registrati
+male impasta le creste. Il mosaicking classico si aggancia sulle minuzie, che
+qui non ci sono.
+
+**BLPOC**, correlazione di sola fase a banda limitata, il metodo di riferimento
+per i sensori piccoli: cinque varianti, tutte 3 errori su 25 contro 1 della
+correlazione normale.
+
+**Nettezza del picco (PSR)** invece dell'altezza: 6 errori su 25, con gli
+impostori sopra i genuini.
+
+**T-norm**, cioe' normalizzare il punteggio rispetto a una coorte: 2 su 25.
+
+Cinque metodi, nessuno meglio della linea di base. Quando ogni cambio
+dell'algoritmo da' lo stesso risultato, il limite non e' nell'algoritmo.
+
+### La causa
+
+Misurando la qualita' delle catture invece dei punteggi:
+
+    dito         appoggio   pixel saturati   SNR banda creste
+    indice-dx        2           61.8%           12.7 dB
+    anulare-dx       3           63.2%           10.7 dB
+    pollice-dx       3           75.1%           12.0 dB
+    indice-sx        3            9.2%           15.9 dB
+
+Fra il 25% e il 75% dei pixel di ogni immagine arrivava **tagliato a 0 o a 255**.
+
+Spazzolando i guadagni con il dito fermo, a offset 0x20
+(`research/tuning/exposure-sweep.py`):
+
+    guadagno 0x00   satura  0.0%   SNR 19.9 dB
+    guadagno 0x01   satura  1.9%   SNR 20.2 dB   <- massimo
+    guadagno 0x04   satura 24.0%   SNR 19.1 dB
+    guadagno 0x0a   satura 42.5%   SNR 16.2 dB   <- quello in uso
+    guadagno 0x0f   satura 49.8%   SNR 14.5 dB
+
+**Il guadagno era dieci volte troppo alto.**
+
+Come ci ero arrivato: a guadagno 0x00 il dito non si vedeva, e mi ero fermato al
+primo valore che lo rendeva visibile. Ma quella prova era stata fatta *prima* di
+sistemare l'offset. La manopola girata era quella sbagliata, e una volta portato
+l'offset a 0x20 il guadagno alto non serviva piu' -- solo che non sono mai
+tornato indietro a rimisurare.
+
+E spiega il falso accesso in modo diretto: con meta' immagine tagliata, quel che
+sopravvive e' dominato da *dove il dito preme*, che e' la componente che tutte le
+dita hanno in comune. Il medio somigliava all'indice perche' di entrambi restava
+soprattutto la pressione.
+
+### Dopo la correzione
+
+Stesso protocollo, guadagno 0x01:
+
+    pixel saturati              42.5%  ->   0.0%
+    SNR                        16.2 dB ->  20.0 dB
+    indice contro indice        0.517-0.881  ->  0.728
+    medio contro indice         0.526-0.633  ->  0.303
+    margine                    negativo      ->  +0.426
+
+Il medio e' passato da sopra soglia a 0.303.
+
+### Errori di metodo, miei
+
+1. **Ho tarato un parametro di acquisizione al primo valore che funzionava**,
+   senza misurare cosa stavo distruggendo. Un guadagno si sceglie guardando la
+   saturazione, non guardando se l'immagine "si vede".
+2. **Ho cercato per quattro volte nel posto sbagliato**, perche' davo per buona
+   la qualita' dei dati. La regola giusta e' misurare la qualita' del segnale
+   prima di accusare l'algoritmo che lo elabora.
+3. **Ho installato prima di rimisurare.** Sapevo -- e lo avevo scritto qui il
+   18/08 -- che gli impostori andavano rimisurati passando a trenta modelli. Ho
+   installato lo stesso, ed e' cosi' che un falso accesso e' finito su una
+   macchina viva.
+4. **Due prove di spazzolata sono state buttate** perche' misuravano il sensore
+   libero credendo di misurare un dito: la prima perche' non avevo aspettato
+   l'appoggio, la seconda perche' il fondo di riferimento era stato imparato con
+   il dito gia' sopra. Da qui il criterio di presenza basato sull'energia nella
+   banda delle creste, che non ha bisogno di un fondo e quindi non si puo'
+   ingannare cosi'.
+5. **Ho annunciato "trovato il registro dell'altezza"** sulla base di una
+   spazzolata i cui numeri, riletti, erano incoerenti: 0x24 non cambia niente
+   dentro il suo intervallo valido, e i valori fuori intervallo davano righe
+   attive 12, 16, 32, cioe' il sensore in confusione. Semantica non stabilita.
+
+### La soglia, tarata sul corridoio vuoto
+
+Dopo la correzione del guadagno, due iscrizioni distinte da trenta appoggi
+ciascuna hanno prodotto queste osservazioni:
+
+    genuini    0.585  0.672  0.704  0.757  0.817  0.854  0.947
+    impostori  0.497  0.508  0.520
+
+Fra 0.520 e 0.585 c'e' un corridoio vuoto, e la soglia va li' in mezzo: **0.55**.
+
+Un primo tentativo l'aveva messa a 0.65, tarandola sui soli tre genuini della
+prima sessione -- tutti sopra 0.81 -- e nella sessione successiva rifiutava lo
+0.585. E' il modo classico di cucire una soglia sui dati che si hanno sottomano
+invece che sulla popolazione, e l'ho fatto pur avendo scritto qui, il 18/08, che
+non andava fatto.
+
+Resta detto chiaramente: dieci osservazioni non misurano un tasso di errore, il
+margine e' di 65 millesimi, e l'unico impostore provato e' il medio della stessa
+mano. Un dito di un'altra persona non e' mai stato presentato al sensore.
+
+### Un'etichetta sbagliata che stava per far concludere il contrario
+
+La lettura della seconda sessione era partita male: la quarta verifica era
+segnata come "medio" e aveva dato 0.672, sopra i genuini, da cui la conclusione
+che le popolazioni si sovrapponessero ancora. Era stato appoggiato l'indice,
+non il medio.
+
+Vale la pena registrarlo perche' e' un difetto del protocollo di misura, non
+dell'operatore: cinque appoggi guidati da messaggi in un terminale che non si
+sta guardando, senza che il sistema sappia quale dito e' arrivato, producono
+etichette inaffidabili. Con cinque campioni per condizione una sola etichetta
+sbagliata ribalta la conclusione. Una misura seria richiede piu' campioni e una
+raccolta in cui l'etichetta e' fissata prima, un dito alla volta.
+
+### Stato a fine sessione
+
+- guadagno 0x01, offset 0x20, saturazione 0%, SNR 20 dB
+- soglia 0.55
+- trenta appoggi in iscrizione, con rifiuto degli appoggi troppo simili
+- libreria in /usr/local/lib/egis057e, drop-in systemd, sopravvive al riavvio
+- impronta abilitata in PAM: GDM, schermata di blocco, sudo, polkit
+
+Da fare, in ordine di importanza:
+
+1. Rifare l'insieme di prova (cinque dita, tre appoggi) al guadagno corretto.
+   Tutte le misure offline di questo progetto vengono da catture con il 25-75%
+   dei pixel saturi, quindi ogni conclusione tratta da quei dati -- comprese le
+   bocciature di BLPOC, mosaicking, PSR e T-norm -- e' stata presa su segnale
+   danneggiato e andrebbe rifatta.
+2. Misurare un impostore vero, cioe' il dito di un'altra persona.
+3. Solo dopo, tornare eventualmente sull'algoritmo.
