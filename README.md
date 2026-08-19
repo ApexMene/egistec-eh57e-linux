@@ -8,10 +8,61 @@
 [![status](https://img.shields.io/badge/status-working-2ea043?style=flat-square)](#status)
 [![platform](https://img.shields.io/badge/platform-Linux-informational?style=flat-square&logo=linux&logoColor=white)](#requirements)
 [![libfprint](https://img.shields.io/badge/libfprint-1.94.100-58a6ff?style=flat-square)](https://gitlab.freedesktop.org/libfprint/libfprint)
-[![license](https://img.shields.io/badge/license-LGPL--2.1-blue?style=flat-square)](#license)
+[![license](https://img.shields.io/badge/license-LGPL--2.1--or--later-blue?style=flat-square)](LICENSE)
+[![build](https://img.shields.io/github/actions/workflow/status/ApexMene/egistec-eh57e-linux/build.yml?branch=main&style=flat-square)](../../actions)
 [![upstream support](https://img.shields.io/badge/upstream%20support-none-red?style=flat-square)](#starting-point)
 
 </div>
+
+---
+
+## Contents
+
+- [If your sensor is a different one](#if-your-sensor-is-a-different-one)
+- [Status](#status)
+- [Starting point](#starting-point) · [Protocol](#protocol)
+- [Why it does not use minutiae](#why-it-does-not-use-minutiae)
+- [How matching works](#how-matching-works) · [Measurements](#measurements)
+- [Methods that were tried and lost](#methods-that-were-tried-and-lost)
+- [Requirements](#requirements) · [Building](#building) · [Usage](#usage)
+- [Known limitations](#known-limitations) · [Security](SECURITY.md)
+- [Roadmap](#roadmap) · [Contributing](CONTRIBUTING.md)
+- [Repository layout](#repository-layout) · [Method notes](#method-notes)
+
+---
+
+## If your sensor is a different one
+
+**Read [`CHANGELOG.md`](CHANGELOG.md).** It is the full working log, kept
+deliberately: not a list of releases, but a record of how an undocumented sensor
+was taken apart — including every wrong turn, and why each direction was chosen
+over the alternatives.
+
+That log is likely to be more useful to you than the driver itself, because the
+driver only fits `1c7a:057e`. The method transfers:
+
+- how to tell a firmware that **executes** commands from one that merely **echoes**
+  them back — the single mistake that can make an entire init sequence look like
+  it worked;
+- how to find the frame geometry in a stream when the datasheet does not exist:
+  autocorrelation peaks give the row stride, and constant-variance regions give
+  the padding;
+- how to find the analog gain register that decides whether a finger is visible
+  at all;
+- how to establish that a sensor is **not** a swipe sensor before spending days
+  building a stitcher for it;
+- how to check whether minutiae matching can work on your contact area before
+  committing to it — and what to do when it cannot;
+- which published methods were measured here and **lost** (see
+  [Methods that were tried and lost](#methods-that-were-tried-and-lost)), so you
+  do not spend the same days on them.
+
+Every claim in that log is attached to a measurement, and the measurement scripts
+are in this repository. Where something was believed and later disproved, both
+the belief and the disproof are still there.
+
+The log is written in Italian; the code, the README and the commit messages are
+in English.
 
 ---
 
@@ -335,9 +386,29 @@ here, because both produced results that were false and convincing.
    `atterraggio.py`, the difference between the start, middle and end of a
    placement is **0.015**. Noise.
 
+## Contributing
+
+Bug reports, device reports and measurements are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) — the one rule that matters is that every
+claim comes with a measurement, and that negative results are kept rather than
+discarded.
+
+If you have an Egis sensor that is not `1c7a:057e`, the **Device report** issue
+template is the place to start, even if nothing works yet.
+
+## Security
+
+Read [SECURITY.md](SECURITY.md) before relying on this for anything.
+
+In short: the false-acceptance rate of this matcher **is not known** — it has
+been measured against twenty impostor comparisons, which cannot establish a
+rate. There is no liveness detection of any kind. The sensor images about 15 mm²
+of skin, which is a hard limit on how much can be distinguished. Treat it as a
+convenience in front of a password you still know, not as a security boundary.
+
 ## License
 
-The driver follows libfprint's license, **LGPL-2.1-or-later**.
+**LGPL-2.1-or-later**, the same as libfprint. Full text in [LICENSE](LICENSE).
 
 The proprietary Egis/Microsoft binaries used as a reference during reverse
 engineering are **not in this repository** and are not redistributable.

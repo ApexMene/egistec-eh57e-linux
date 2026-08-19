@@ -1,0 +1,36 @@
+name: Bug report
+description: Something in the driver or the tools misbehaves
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not attach fingerprint captures. Logs, numbers and scores only.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: fprintd log
+      description: >
+        Run fprintd as described in the README and paste the relevant part. The
+        driver prints its phase, its distance from the learned background and
+        the correlation score of every verification, which is usually enough to
+        tell what went wrong.
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: libfprint and fprintd versions
+      placeholder: "libfprint 1.94.100, fprintd 1.94.5"
+    validations:
+      required: true
