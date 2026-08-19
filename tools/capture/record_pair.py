@@ -93,6 +93,21 @@ def main():
     egis.wr(dev, egis.REG_GAIN, 0x01); egis.wr(dev, egis.REG_OFFSET, 0x20)
     egis.drain(dev)
 
+    # Si puo' chiedere un dito solo: la prima sessione si e' interrotta dopo i
+    # tre appoggi dell'indice, e rifare anche quelli sarebbe tempo di dito
+    # sprecato. Il fondo si riusa se c'e' gia'.
+    quali = sys.argv[1:] or ["indice", "medio"]
+    percorso_fondo = os.path.join(DATI, "g01-fondo.bin")
+
+    if os.path.exists(percorso_fondo):
+        print("fondo gia' presente, lo riuso", flush=True)
+        for nome in quali:
+            for n in (1, 2, 3):
+                appoggio(dev, nome, n)
+        finestra("<b>Finito, puoi togliere il dito.</b>", "Finito")
+        print(f"\nfatto: {3*len(quali)} appoggi in data/g01-*.bin")
+        return 0
+
     print("fondo -- non toccare...", flush=True)
     finestra("<b>Non toccare per qualche secondo.</b>\n\nSto registrando il fondo.",
              "Fondo")
@@ -101,7 +116,7 @@ def main():
     np.mean(acc, axis=0).astype(np.uint8).tofile(os.path.join(DATI, "g01-fondo.bin"))
     print("fondo salvato", flush=True)
 
-    for nome in ("indice", "medio"):
+    for nome in quali:
         for n in (1, 2, 3):
             appoggio(dev, nome, n)
 
