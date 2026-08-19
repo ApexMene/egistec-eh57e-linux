@@ -1855,3 +1855,45 @@ Da fare, in ordine di importanza:
    danneggiato e andrebbe rifatta.
 2. Misurare un impostore vero, cioe' il dito di un'altra persona.
 3. Solo dopo, tornare eventualmente sull'algoritmo.
+
+### La galleria grande: effetto reale, ma troppo piccolo per spiegare il falso accesso
+
+Catture etichettate al guadagno corretto (`data/g01-*.bin`, tre appoggi di indice
+e tre di medio, un dito alla volta con l'etichetta fissata prima), iscrivendo gli
+appoggi 1 e 2 dell'indice e verificando con il terzo e con i tre del medio:
+
+    modelli   genuino   imp.max   margine
+          2     0.459     0.425    +0.034
+          4     0.734     0.425    +0.309
+          8     0.735     0.425    +0.310
+         16     0.735     0.425    +0.310
+         30     0.735     0.436    +0.298
+         60     0.735     0.440    +0.294
+
+L'effetto del massimo su N esiste -- il miglior impostore sale da 0.425 a 0.440 --
+ma e' di quindici millesimi. Non spiega lo 0.734 misurato sul ferro.
+
+**L'esperimento pero' non ha testato l'ipotesi vera, e va detto.** Qui "30
+modelli" sono trenta ritagli di due soli appoggi, quindi ridondanti: si vede dal
+fatto che il margine satura gia' a quattro. Dal vivo i trenta modelli vengono da
+trenta appoggi *distinti*, che coprono molto piu' polpastrello e offrono a un
+dito estraneo occasioni diverse, non copie della stessa. Per riprodurre quella
+condizione servono una decina di appoggi distinti dell'indice, non due.
+
+Quello che questi dati dicono con certezza e' un'altra cosa, e non e' poco: al
+punto di lavoro corretto **indice e medio si separano bene**, 0.735 contro 0.425,
+con la soglia 0.55 comodamente in mezzo.
+
+### La saturazione dipende dalla pressione, non solo dal guadagno
+
+Sei appoggi allo stesso guadagno 0x01:
+
+    indice-1  satura 21.1%     medio-1  satura  0.0%
+    indice-2  satura  2.9%     medio-2  satura 10.3%
+    indice-3  satura  0.0%     medio-3  satura 14.4%
+
+Stesso dito, stesso registro, saturazione da 0% a 21%. Un guadagno fisso non puo'
+garantire niente: va regolato a ogni cattura puntando a saturazione quasi nulla,
+che e' quello che fa qualsiasi driver serio e che qui non c'e'. E' anche la
+spiegazione piu' plausibile della variabilita' dei punteggi dal vivo, dove lo
+stesso medio ha fatto 0.303 in una prova controllata e 0.734 in un'altra.
