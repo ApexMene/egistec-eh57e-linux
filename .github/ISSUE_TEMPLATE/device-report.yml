@@ -1,0 +1,70 @@
+name: Device report
+description: Report an Egis fingerprint sensor, working or not
+title: "[device] VID:PID — laptop model"
+labels: ["device-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Reports are useful even when nothing works yet. Knowing which sensors
+        answer the `EGIS` commands, and which only echo them back, is what tells
+        us whether a device belongs to the same family.
+
+        Please do not attach fingerprint captures. Numbers and logs only.
+
+  - type: input
+    id: usbid
+    attributes:
+      label: USB ID
+      description: From `lsusb`, in the form 1c7a:057e
+      placeholder: "1c7a:057e"
+    validations:
+      required: true
+
+  - type: input
+    id: machine
+    attributes:
+      label: Laptop model
+      placeholder: "Samsung Galaxy Book3 Pro 360"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: state
+    attributes:
+      label: What happens today
+      options:
+        - Not tried yet, reporting the device only
+        - Device answers commands, no usable image
+        - Image works, matching does not
+        - Enrolment and verification both work
+    validations:
+      required: true
+
+  - type: textarea
+    id: lsusb
+    attributes:
+      label: Output of `lsusb -v -d VID:PID`
+      description: Run it with sudo, otherwise most descriptors are hidden.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: echo
+    attributes:
+      label: Echo test
+      description: >
+        Result of `research/protocol/probe6-echo-test.py`, if you ran it. This
+        distinguishes a firmware that executes commands from one that validates
+        the `EGIS` prefix and echoes the parameters back. Without it, an init
+        sequence can report success while nothing has executed.
+      render: text
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: >
+        Distribution and kernel, whether the sensor is inside the power button,
+        and what you have already tried.

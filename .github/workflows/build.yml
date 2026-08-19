@@ -1,0 +1,89 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  driver:
+    name: Build the driver against libfprint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            meson ninja-build gcc pkg-config \
+            libglib2.0-dev libgusb-dev libnss3-dev libgudev-1.0-dev \
+            libcairo2-dev libopencv-dev gtk-doc-tools python3-cairo-dev
+
+      - name: Fetch libfprint
+        run: |
+          git clone --depth 1 \
+            https://gitlab.freedesktop.org/libfprint/libfprint.git libfprint-src
+
+      - name: Add the driver
+        run: |
+          cp driver/egis057e.c driver/egis057e.h libfprint-src/libfprint/drivers/
+          # Registration happens in two places; do it here rather than carrying
+          # a patch that rots against upstream.
+          python3 - <<'PY'
+          import pathlib
+
+          # Both files list the drivers as dictionary entries. Anchoring on the
+          # neighbouring egis0570 line rather than on the dictionary name keeps
+          # this working when upstream renames the variable around it.
+          for path, anchor, entry in (
+              ("libfprint-src/meson.build",
+               "    'egis0570': {},",
+               "    'egis057e': {},"),
+              ("libfprint-src/libfprint/meson.build",
+               "    'egis0570' : files('drivers/egis0570.c'),",
+               "    'egis057e' : files('drivers/egis057e.c'),"),
+          ):
+              p = pathlib.Path(path)
+              s = p.read_text()
+              if "egis057e" in s:
+                  continue
+              if anchor not in s:
+                  raise SystemExit(f"anchor not found in {path}; upstream moved it")
+              p.write_text(s.replace(anchor, anchor + "\n" + entry, 1))
+              print("registered in", path)
+          PY
+
+      - name: Build
+        run: |
+          meson setup libfprint-src/build libfprint-src \
+            -Ddrivers=egis057e -Ddoc=false -Dgtk-examples=false -Dintrospection=false
+          ninja -C libfprint-src/build
+
+      - name: The device must be listed
+        run: |
+          ./libfprint-src/build/libfprint/fprint-list-supported-devices \
+            | grep -i '057e'
+
+  tools:
+    name: Analysis tools
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install numpy matplotlib ruff
+
+      - name: Lint
+        run: ruff check --select E9,F63,F7,F82 .
+
+      - name: Everything must at least import
+        # The captures are not in the repository -- they are fingerprints -- so
+        # the tools cannot be run here. Compiling them still catches the syntax
+        # and import errors that a reorganisation introduces.
+        run: |
+          python3 -m compileall -q tools lib docs
