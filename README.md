@@ -5,7 +5,7 @@
 **A working libfprint driver for the EgisTec EH57E fingerprint sensor
 (`1c7a:057e`) — the one inside the power button of Samsung Galaxy Book laptops.**
 
-[![status](https://img.shields.io/badge/status-working-2ea043?style=flat-square)](#status)
+[![status](https://img.shields.io/badge/status-work%20in%20progress-orange?style=flat-square)](#status)
 [![platform](https://img.shields.io/badge/platform-Linux-informational?style=flat-square&logo=linux&logoColor=white)](#requirements)
 [![libfprint](https://img.shields.io/badge/libfprint-1.94.100-58a6ff?style=flat-square)](https://gitlab.freedesktop.org/libfprint/libfprint)
 [![license](https://img.shields.io/badge/license-LGPL--2.1--or--later-blue?style=flat-square)](LICENSE)
@@ -13,6 +13,40 @@
 [![upstream support](https://img.shields.io/badge/upstream%20support-none-red?style=flat-square)](#starting-point)
 
 </div>
+
+---
+
+> ## ⚠️ Work in progress — do not rely on this for security
+>
+> The driver talks to the sensor, enrols, verifies, and authenticates through
+> PAM. **The matcher does not reliably tell fingers apart.**
+>
+> Measured on hardware, at the corrected working point, with a 30-placement
+> enrolment of the right index:
+>
+> ```
+> right index  (enrolled)     0.573  0.585  0.672  0.704  0.757  0.817  0.854  0.947
+> right middle (NOT enrolled) 0.303  0.497  0.508  0.520  0.734
+> ```
+>
+> The two ranges **overlap**: an unenrolled middle finger scored 0.734, higher
+> than five of the eight genuine scores, and unlocked a `polkit` prompt. No
+> threshold separates these observations.
+>
+> A different finger of the same hand is the *easiest* impostor to reject, not
+> the hardest. **No other person's finger has ever been presented to this
+> sensor**, so the false-acceptance rate is not merely unmeasured — it is
+> unbounded by anything observed here.
+>
+> Use this to learn how the sensor works, or as a convenience on a machine where
+> that trade-off is yours alone to make. Do not use it as a security boundary,
+> and do not ship it to anyone who would.
+>
+> The current suspect is the decision rule rather than the image: the score is
+> the maximum over all enrolled templates, and the maximum of N draws grows with
+> N even without signal. The same middle finger scored 0.303 against two enrolled
+> templates and 0.734 against thirty. Finding the gallery size that maximises
+> separation is the next measurement.
 
 ---
 
