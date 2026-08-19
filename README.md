@@ -78,7 +78,7 @@ Raising it to `0x0a`, with offset (`0x0f`) at `0x20`, makes the finger appear.
 
 <div align="center">
 
-![what the sensor sees](docs/sensore.png)
+![what the sensor sees](docs/sensor.png)
 
 </div>
 
@@ -106,7 +106,7 @@ So the driver does not hand an image to libfprint. It implements its own matcher
 
    <div align="center">
 
-   ![presence threshold](docs/soglia.png)
+   ![presence threshold](docs/threshold.png)
 
    </div>
 
@@ -127,7 +127,7 @@ how well something resembles itself.
 
 <div align="center">
 
-![score matrix](docs/matrice.png)
+![score matrix](docs/matrix.png)
 
 </div>
 
@@ -142,7 +142,7 @@ On the same finger, different placements score very differently:
 
 <div align="center">
 
-![three placements of the same finger](docs/appoggi.png)
+![three placements of the same finger](docs/placements.png)
 
 </div>
 
