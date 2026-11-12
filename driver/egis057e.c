@@ -21,6 +21,7 @@
 
 #include "drivers_api.h"
 #include "egis057e.h"
+#include "egis057e-matcher.h"
 
 #include <math.h>
 #include <string.h>
@@ -56,22 +57,39 @@ struct _FpiDeviceEgis057e
   gint       collected;
   gint       waited;
 
+  /* Frames above threshold in a row during PH_WAIT_OFF: a background learned
+     around a finger keeps this growing forever, and at
+     EGIS057E_BG_STUCK_FRAMES it buys a fresh learning instead of deafness. */
+  gint       stuck;
+  /* TRUE while a re-learning triggered by PH_WAIT_OFF is running inside this
+     same SSM; when it finishes the machine goes back to waiting instead of
+     completing, because the caller still wants its placement. */
+  gboolean   bg_relearn;
+
   /* Solo per la traccia: conta i fotogrammi per stampare una riga ogni tanto
      invece di novanta al secondo. */
   gint       traccia;
 
   gint       init_idx;
+  /* Reads still allowed to the drain that precedes the init sequence. */
+  gint       drain_left;
 
   /* Appoggi rifiutati di fila perche' troppo simili: azzerato a ogni
      appoggio accettato. */
   gint       rejected;
 
   /* enrolment in progress */
-  GPtrArray *templates;         /* of gint8*, one per placement */
+  GPtrArray *templates;         /* of gint8*, one per placement: only used to
+                                   refuse a placement identical to a previous
+                                   one, never stored */
+  GPtrArray *images;            /* of guint8*, one per placement: what is
+                                   stored in the print and matched against */
   gint       stage;
 
   /* the template just captured, normalised and quantised */
   gint8      sample[EGIS057E_IMGSIZE];
+  /* the same placement as an 8-bit image, the input of the feature matcher */
+  guint8     image[EGIS057E_IMGSIZE];
 };
 
 G_DEFINE_TYPE (FpiDeviceEgis057e, fpi_device_egis057e, FP_TYPE_DEVICE)
@@ -167,6 +185,40 @@ make_template (const gdouble *frame, gint8 *out)
     {
       gdouble v = CLAMP (a[i] / sd, -EGIS057E_TPL_CLIP, EGIS057E_TPL_CLIP);
       out[i] = (gint8) lrint (v * EGIS057E_TPL_SCALE);
+    }
+}
+
+/*
+ * The placement as the feature matcher wants it: background already removed
+ * by the caller, then brought to a fixed mean and deviation and clipped to
+ * eight bits.
+ *
+ * The fixed level matters as much as the subtraction. The same finger arrives
+ * with a frame mean anywhere between 48 and 156 depending on pressure, and the
+ * matcher's detector works on absolute differences: without this two
+ * placements of one finger differ more in exposure than two fingers do in
+ * ridges. Measured on the labelled captures (see EGIS057E_FEAT_THRESHOLD),
+ * raw frames put 41% of genuine pairs above the best impostor, these 75-80%.
+ */
+static void
+make_image (const gdouble *frame, guint8 *out)
+{
+  gdouble mean = 0.0, var = 0.0, sd;
+
+  for (gint i = 0; i < EGIS057E_IMGSIZE; i++)
+    mean += frame[i];
+  mean /= EGIS057E_IMGSIZE;
+
+  for (gint i = 0; i < EGIS057E_IMGSIZE; i++)
+    var += (frame[i] - mean) * (frame[i] - mean);
+  sd = sqrt (var / EGIS057E_IMGSIZE);
+  if (sd < 1e-6)
+    sd = 1.0;
+
+  for (gint i = 0; i < EGIS057E_IMGSIZE; i++)
+    {
+      gdouble v = (frame[i] - mean) / sd * EGIS057E_IMG_SIGMA + EGIS057E_IMG_MEAN;
+      out[i] = (guint8) CLAMP (lrint (v), 0, 255);
     }
 }
 
@@ -384,8 +436,9 @@ capture_run_state (FpiSsm *ssm, FpDevice *dev)
        * sempre toccato) o sotto (il dito non si vede piu').
        */
       if (self->have_background && ++self->traccia % 45 == 0)
-        fp_dbg ("traccia: fase %d distanza %.1f soglia %d",
-                self->phase, frame_distance (self), EGIS057E_FINGER_THRESHOLD);
+        fp_dbg ("traccia: fase %d distanza %.1f soglia %d blocco %d",
+                self->phase, frame_distance (self),
+                EGIS057E_FINGER_THRESHOLD, self->stuck);
 
       switch (self->phase)
         {
@@ -409,7 +462,22 @@ capture_run_state (FpiSsm *ssm, FpDevice *dev)
                 }
               self->bg_mean /= EGIS057E_IMGSIZE;
               self->have_background = TRUE;
-              fpi_ssm_mark_completed (ssm);
+              if (self->bg_relearn)
+                {
+                  /* The re-learning came from PH_WAIT_OFF inside this same
+                     capture: hand control back to the waiting phase instead
+                     of completing, or verify/enroll would end without ever
+                     having looked at a finger. */
+                  fp_info ("background re-learned, back to waiting");
+                  self->bg_relearn = FALSE;
+                  self->stuck = 0;
+                  self->phase = PH_WAIT_OFF;
+                  fpi_ssm_jump_to_state (ssm, CAP_REARM);
+                }
+              else
+                {
+                  fpi_ssm_mark_completed (ssm);
+                }
             }
           else if (++self->waited > 200)
             {
@@ -426,7 +494,28 @@ capture_run_state (FpiSsm *ssm, FpDevice *dev)
         case PH_WAIT_OFF:
           if (frame_distance (self) < EGIS057E_FINGER_THRESHOLD)
             {
+              self->stuck = 0;
               self->phase = PH_WAIT_ON;
+            }
+          else if (++self->stuck >= EGIS057E_BG_STUCK_FRAMES)
+            {
+              /*
+               * Ten seconds of permanent "finger" with nobody touching the
+               * sensor means the background has a finger inside it: every
+               * distance is measured against that, so no finger will ever
+               * stand out again and this phase never closes. Learn it fresh;
+               * if something really is resting on the sensor, the deviation
+               * guard rejects those frames and the learning fails loudly
+               * instead of the driver staying silent for the whole session.
+               */
+              fp_warn ("background looks stale (%d frames above threshold), "
+                       "re-learning", self->stuck);
+              self->bg_relearn = TRUE;
+              self->phase = PH_BACKGROUND;
+              self->bg_used = 0;
+              self->waited = 0;
+              memset (self->accum, 0,
+                      EGIS057E_IMGSIZE * sizeof (gdouble));
             }
           fpi_ssm_jump_to_state (ssm, CAP_REARM);
           break;
@@ -463,6 +552,7 @@ capture_run_state (FpiSsm *ssm, FpDevice *dev)
                 avg[i] = self->accum[i] / self->collected;
 
               make_template (avg, self->sample);
+              make_image (avg, self->image);
               fpi_ssm_mark_completed (ssm);
             }
           else
@@ -493,6 +583,8 @@ capture_ssm (FpDevice *dev, Egis057ePhase phase)
   self->phase = phase;
   self->waited = 0;
   self->collected = 0;
+  self->stuck = 0;
+  self->bg_relearn = FALSE;
   if (phase == PH_BACKGROUND)
     {
       self->bg_used = 0;
@@ -507,11 +599,48 @@ capture_ssm (FpDevice *dev, Egis057ePhase phase)
  * ------------------------------------------------------------------------ */
 
 enum init_states {
+  INIT_DRAIN,
   INIT_SEND,
   INIT_RECV,
   INIT_NEXT,
   INIT_NUM_STATES,
 };
+
+/*
+ * Whatever the sensor still wants to say from a previous session is read and
+ * thrown away before the first command.
+ *
+ * Measured on 2026-11-12: a verification cancelled while an image was on the
+ * wire left the sensor with 6344 bytes pending (the 1024 that remained of that
+ * block, then a whole one), and from then on every open timed out on its
+ * first reply, across a restart of the daemon. The init reads ask for 64
+ * bytes and cannot take a 5320-byte block. Reading with a buffer large enough
+ * for one emptied it, and the very next command was answered normally - no
+ * USB reset involved, which matters because reset storms on this device are
+ * what froze the whole machine in August.
+ *
+ * A timeout here is the normal case: it means there was nothing to read.
+ */
+static void
+init_drain_cb (FpiUsbTransfer *transfer, FpDevice *dev, gpointer user_data,
+               GError *error)
+{
+  FpiDeviceEgis057e *self = FPI_DEVICE_EGIS057E (dev);
+
+  if (error)
+    {
+      g_error_free (error);
+      self->drain_left = 0;
+    }
+  else
+    {
+      fp_dbg ("drained %" G_GSSIZE_FORMAT " stale bytes before init",
+              transfer->actual_length);
+      self->drain_left--;
+    }
+
+  fpi_ssm_jump_to_state (transfer->ssm, INIT_DRAIN);
+}
 
 static void
 init_run_state (FpiSsm *ssm, FpDevice *dev)
@@ -521,6 +650,23 @@ init_run_state (FpiSsm *ssm, FpDevice *dev)
 
   switch (fpi_ssm_get_cur_state (ssm))
     {
+    case INIT_DRAIN:
+      if (self->drain_left <= 0)
+        {
+          fpi_ssm_next_state (ssm);
+        }
+      else
+        {
+          FpiUsbTransfer *t = fpi_usb_transfer_new (dev);
+
+          fpi_usb_transfer_fill_bulk (t, EGIS057E_EPIN, EGIS057E_DRAIN_SIZE);
+          t->ssm = ssm;
+          t->short_is_error = FALSE;
+          fpi_usb_transfer_submit (t, EGIS057E_DRAIN_TIMEOUT, NULL,
+                                   init_drain_cb, NULL);
+        }
+      break;
+
     case INIT_SEND:
       /* len 0 is the flush pseudo-packet: read whatever is pending and move
          on. Without it the replies run one behind for the rest of the
@@ -594,6 +740,7 @@ dev_open (FpDevice *dev)
     }
 
   self->init_idx = 0;
+  self->drain_left = EGIS057E_DRAIN_READS;
   fpi_ssm_start (fpi_ssm_new (dev, init_run_state, INIT_NUM_STATES),
                  open_init_done);
 }
@@ -612,6 +759,10 @@ dev_close (FpDevice *dev)
  * Enrol
  * ------------------------------------------------------------------------ */
 
+/* Stored as (version, placements). The version is there because the bare
+   "aay" of the correlation matcher held band-passed signed templates of the
+   very same length: without it an old print would be scored as if it were an
+   image, and fail in a way that looks like a bad finger. */
 static GVariant *
 templates_to_variant (GPtrArray *templates)
 {
@@ -626,7 +777,8 @@ templates_to_variant (GPtrArray *templates)
                                                             EGIS057E_IMGSIZE,
                                                             1));
 
-  return g_variant_builder_end (&b);
+  return g_variant_new ("(q@aay)", (guint16) EGIS057E_TPL_VERSION,
+                        g_variant_builder_end (&b));
 }
 
 static void enroll_next (FpDevice *dev);
@@ -640,6 +792,7 @@ enroll_stage_done (FpiSsm *ssm, FpDevice *dev, GError *error)
   if (error)
     {
       g_clear_pointer (&self->templates, g_ptr_array_unref);
+      g_clear_pointer (&self->images, g_ptr_array_unref);
       fpi_device_enroll_complete (dev, NULL, error);
       return;
     }
@@ -691,6 +844,7 @@ enroll_stage_done (FpiSsm *ssm, FpDevice *dev, GError *error)
 
   tpl = g_memdup2 (self->sample, EGIS057E_IMGSIZE);
   g_ptr_array_add (self->templates, tpl);
+  g_ptr_array_add (self->images, g_memdup2 (self->image, EGIS057E_IMGSIZE));
   self->stage++;
 
   fpi_device_enroll_progress (dev, self->stage, NULL, NULL);
@@ -702,10 +856,11 @@ enroll_stage_done (FpiSsm *ssm, FpDevice *dev, GError *error)
       fpi_device_get_enroll_data (dev, &print);
       fpi_print_set_type (print, FPI_PRINT_RAW);
       fpi_print_set_device_stored (print, FALSE);
-      g_object_set (print, "fpi-data", templates_to_variant (self->templates),
+      g_object_set (print, "fpi-data", templates_to_variant (self->images),
                     NULL);
 
       g_clear_pointer (&self->templates, g_ptr_array_unref);
+      g_clear_pointer (&self->images, g_ptr_array_unref);
       fpi_device_enroll_complete (dev, g_object_ref (print), NULL);
       return;
     }
@@ -730,6 +885,8 @@ dev_enroll (FpDevice *dev)
   self->stage = 0;
   g_clear_pointer (&self->templates, g_ptr_array_unref);
   self->templates = g_ptr_array_new_with_free_func (g_free);
+  g_clear_pointer (&self->images, g_ptr_array_unref);
+  self->images = g_ptr_array_new_with_free_func (g_free);
 
   enroll_next (dev);
 }
@@ -738,15 +895,30 @@ dev_enroll (FpDevice *dev)
  * Verify
  * ------------------------------------------------------------------------ */
 
+/*
+ * Feature points of the presented placement against those of every enrolled
+ * one; the score is the best of them.
+ *
+ * The matcher (egis057e-matcher.c) finds interest points, describes each by a
+ * binary signature of its surroundings, pairs them between the two images and
+ * keeps only the pairs that agree on one common shift and rotation. That last
+ * step is what the correlation it replaces could not do: parallel ridges
+ * correlate with anybody's, but an impostor does not put a few dozen distinct
+ * points in the same mutual geometry.
+ */
 static void
 verify_done (FpiSsm *ssm, FpDevice *dev, GError *error)
 {
   FpiDeviceEgis057e *self = FPI_DEVICE_EGIS057E (dev);
   g_autoptr(GVariant) data = NULL;
-  g_autoptr(GVariant) child = NULL;
+  g_autoptr(GVariant) list = NULL;
+  g_autofree Egis057eMFeatureSet *probe = NULL;
+  g_autofree Egis057eMFeatureSet *gallery = NULL;
+  GVariant *child;
   GVariantIter iter;
   FpPrint *print = NULL;
-  gdouble best = -1.0;
+  guint16 version = 0;
+  gint best = 0, second = 0, used = 0;
 
   if (error)
     {
@@ -757,34 +929,63 @@ verify_done (FpiSsm *ssm, FpDevice *dev, GError *error)
   fpi_device_get_verify_data (dev, &print);
   g_object_get (print, "fpi-data", &data, NULL);
 
-  if (data == NULL || !g_variant_is_of_type (data, G_VARIANT_TYPE ("aay")))
+  if (data == NULL || !g_variant_is_of_type (data, G_VARIANT_TYPE ("(qaay)")))
     {
       fpi_device_verify_complete (dev,
                                   fpi_device_error_new_msg (FP_DEVICE_ERROR_DATA_INVALID,
-                                                            "print was not enrolled by this driver"));
+                                                            "print enrolled by an older version of this driver, enrol it again"));
       return;
     }
 
-  g_variant_iter_init (&iter, data);
+  g_variant_get (data, "(q@aay)", &version, &list);
+  if (version != EGIS057E_TPL_VERSION)
+    {
+      fpi_device_verify_complete (dev,
+                                  fpi_device_error_new_msg (FP_DEVICE_ERROR_DATA_INVALID,
+                                                            "print format %u is not the one this driver writes, enrol it again",
+                                                            version));
+      return;
+    }
+
+  probe = g_new0 (Egis057eMFeatureSet, 1);
+  gallery = g_new0 (Egis057eMFeatureSet, 1);
+  egis057e_m_extract (self->image, EGIS057E_IMGWIDTH, EGIS057E_IMGHEIGHT, probe);
+
+  g_variant_iter_init (&iter, list);
   while ((child = g_variant_iter_next_value (&iter)))
     {
       gsize len = 0;
-      const gint8 *tpl = g_variant_get_fixed_array (child,
-                                                    &len, 1);
+      const guint8 *tpl = g_variant_get_fixed_array (child, &len, 1);
+
       if (len == EGIS057E_IMGSIZE)
         {
-          gdouble v = correlate (self->sample, tpl);
+          gint v;
+
+          egis057e_m_extract (tpl, EGIS057E_IMGWIDTH, EGIS057E_IMGHEIGHT,
+                              gallery);
+          v = egis057e_m_score (probe, gallery, NULL);
           if (v > best)
-            best = v;
+            {
+              second = best;
+              best = v;
+            }
+          else if (v > second)
+            {
+              second = v;
+            }
+          used++;
         }
-      g_clear_pointer (&child, g_variant_unref);
+      g_variant_unref (child);
     }
 
-  fp_dbg ("best correlation %.3f, threshold %.2f", best,
-          EGIS057E_MATCH_THRESHOLD);
+  egis057e_m_feature_set_clear (probe);
+  egis057e_m_feature_set_clear (gallery);
+
+  fp_dbg ("best score %d, second %d, over %d placements, %d features, threshold %d",
+          best, second, used, probe->n, EGIS057E_FEAT_THRESHOLD);
 
   fpi_device_verify_report (dev,
-                            best >= EGIS057E_MATCH_THRESHOLD ?
+                            best >= EGIS057E_FEAT_THRESHOLD ?
                             FPI_MATCH_SUCCESS : FPI_MATCH_FAIL,
                             NULL, NULL);
   fpi_device_verify_complete (dev, NULL);
@@ -813,6 +1014,7 @@ fpi_device_egis057e_finalize (GObject *object)
   FpiDeviceEgis057e *self = FPI_DEVICE_EGIS057E (object);
 
   g_clear_pointer (&self->templates, g_ptr_array_unref);
+  g_clear_pointer (&self->images, g_ptr_array_unref);
   g_clear_pointer (&self->background, g_free);
   g_clear_pointer (&self->accum, g_free);
   G_OBJECT_CLASS (fpi_device_egis057e_parent_class)->finalize (object);

@@ -19,34 +19,30 @@
 > ## ⚠️ Work in progress — do not rely on this for security
 >
 > The driver talks to the sensor, enrols, verifies, and authenticates through
-> PAM. **The matcher does not reliably tell fingers apart.**
+> PAM. Since 2026-11-12 the matcher **does** tell the two fingers it was shown
+> apart — which the one before it did not.
 >
-> Measured on hardware, at the corrected working point, with a 30-placement
-> enrolment of the right index:
+> Measured on hardware, right index enrolled with 30 placements, best score over
+> the whole gallery, threshold **6000**:
 >
 > ```
-> right index  (enrolled)     0.573  0.585  0.672  0.704  0.757  0.817  0.854  0.947
-> right middle (NOT enrolled) 0.303  0.497  0.508  0.520  0.734
+> right index  (enrolled)      4859 |  7118  8782  8907 10640 11904 15505 15636 16016 16953 24104
+> right middle (NOT enrolled)  2340  2639  2658  2763  2960  3083  3145  3761  4669  4898 |
 > ```
 >
-> The two ranges **overlap**: an unenrolled middle finger scored 0.734, higher
-> than five of the eight genuine scores, and unlocked a `polkit` prompt. No
-> threshold separates these observations.
+> Ten of eleven genuine placements accepted, none of ten impostor placements.
+> With the previous matcher the same two fingers **overlapped**: an unenrolled
+> middle finger scored higher than five of eight genuine placements and unlocked
+> a `polkit` prompt.
 >
-> A different finger of the same hand is the *easiest* impostor to reject, not
-> the hardest. **No other person's finger has ever been presented to this
-> sensor**, so the false-acceptance rate is not merely unmeasured — it is
-> unbounded by anything observed here.
+> What this is not: an error rate. It is twenty-one observations of one person,
+> and the impostor is a different finger of the same hand. **No other person's
+> finger has ever been presented to this sensor.** There is no liveness
+> detection, the image crosses USB in the clear, and the window is 15 mm² of
+> skin.
 >
-> Use this to learn how the sensor works, or as a convenience on a machine where
-> that trade-off is yours alone to make. Do not use it as a security boundary,
-> and do not ship it to anyone who would.
->
-> The current suspect is the decision rule rather than the image: the score is
-> the maximum over all enrolled templates, and the maximum of N draws grows with
-> N even without signal. The same middle finger scored 0.303 against two enrolled
-> templates and 0.734 against thirty. Finding the gallery size that maximises
-> separation is the next measurement.
+> Use it as a convenience in front of a password you still know. Do not use it
+> as a security boundary, and do not ship it to anyone who would.
 
 ---
 
@@ -111,7 +107,7 @@ in English.
 | `fprintd-enroll` | ✅ `enroll-completed` |
 | `fprintd-verify` | ✅ `verify-match` |
 | PAM (GDM, lock screen, `sudo`) | ✅ via `authselect` |
-| Rejection rate | ⚠️ needs work — see [Known limitations](#known-limitations) |
+| Telling fingers apart | ✅ on the two fingers measured (10/11 accepted, 0/10 impostors) — ⚠️ see [Known limitations](#known-limitations) |
 | Permanent installation | ✅ systemd drop-in, survives reboot |
 
 ## Starting point
@@ -196,13 +192,81 @@ So the driver does not hand an image to libfprint. It implements its own matcher
    </div>
 
 3. **Template.** Average of 40 frames (the finger is stationary, so averaging
-   only cancels noise), then a **difference of Gaussians**, σ 1.2 / 3.5, acting as
-   a band-pass around the ridge period — measured at **8 pixels**, i.e. 0.125
-   cycles/pixel. Below that band is finger pressure, which changes on every touch
-   and says nothing about identity; above it is thermal noise. The result is
-   normalised to unit variance and quantised to `int8`.
-4. **Matching.** Normalised cross-correlation, maximised over all shifts up to
-   ±8 pixels. Acceptance threshold **0.55**.
+   only cancels noise) with the background subtracted, brought to a fixed mean
+   and deviation (128 / 40) and stored as an 8-bit image, 3990 bytes per
+   placement. The fixed level is not cosmetic: the same finger arrives with a
+   frame mean anywhere between 48 and 156 depending on pressure.
+4. **Matching.** Interest points on each image, a binary descriptor of the
+   surroundings of each, nearest-neighbour pairing between probe and enrolled
+   placement, and then the step that matters: only pairs that agree on **one
+   common shift and rotation** are kept, and the score is summed over those.
+   The best score over all enrolled placements is compared with **6000**.
+
+### The matcher that replaced the correlation
+
+Until 2026-11-12 step 4 was a normalised cross-correlation of band-passed
+templates, maximised over shifts of ±8 pixels. It was built carefully, tuned
+against real captures, and it could not do the job: ridges are near-parallel
+lines, and a correlation is happy to slide one person's lines onto another's.
+The unenrolled middle finger reached 0.734 against a threshold of 0.55.
+
+Before writing a third matcher from scratch, the question was whether anyone
+else had already solved this. In August the answer had been no — 0 successes on
+118 machines. By November there were three independent drivers for this exact
+sensor and two for its twin, the EH576 (same 70 × 57 geometry). One of them,
+[lagthedark/eh57e-libfprint](https://github.com/lagthedark/eh57e-libfprint),
+ships a matcher described as a reimplementation of the vendor's Windows engine.
+
+It was measured before it was adopted, offline, on the labelled captures already
+in hand (index and middle, three placements each, pairs from the same placement
+excluded):
+
+| | genuine median | best impostor | genuine above best impostor |
+|---|---|---|---|
+| correlation (the old matcher) | 0.436 | 0.377 | 61% |
+| feature matcher on **raw** frames | 4010 | 4260 | 41% |
+| feature matcher on averaged, background-subtracted, level-fixed frames | **7174** | **3712** | **75%** |
+
+Two things came out of that table. The feature matcher is better — and fed raw
+frames, the way its own driver feeds it, it is *worse* than what it replaces.
+The gain is in the pairing: their matcher, this driver's acquisition. So only
+`egis057e-matcher.[ch]` was taken, unmodified, and the rest of that driver was
+left where it was.
+
+Then on hardware, with a full 30-placement gallery — the numbers at the top of
+this page. The gallery did what the old README predicted a gallery does: the
+best impostor rose from 3712 against one placement to 4898 against thirty. The
+first threshold, 5000, had been set from the offline table and was left two
+percent above it. Nothing lies between 4898 and 7118 except one genuine
+placement at 4859 that no threshold above the impostors can save, so the
+threshold moved to 6000.
+
+A verification against thirty placements costs about 0.9 s: 26 ms to extract
+the features of one image, 4 ms to compare two sets.
+
+**A mistake made along the way, kept because it is instructive.** The first
+offline comparison reported impostor pairs correlating at exactly 1.0. Two
+different fingers do not do that. The older capture files begin with 24 to 206
+frames of an *empty* sensor, and the frames sampled for the test had landed
+there: an empty sensor resembles an empty sensor perfectly. A result that is
+too clean in either direction is a property of the data until proven otherwise.
+
+### The sensor that stopped answering
+
+During that same hardware session a verification was interrupted with Ctrl-C
+while an image was on the wire. From then on every open failed with
+`transfer timed out`, and restarting the daemon changed nothing.
+
+The sensor was still enumerated and the kernel logged no reset. It simply had
+**6344 bytes still to say** — the 1024 that remained of the interrupted block,
+then a whole one — and the init sequence reads 64 bytes at a time. Reading the
+endpoint from user space with a 16 KB buffer emptied it, and the very next
+command was answered normally.
+
+The driver now does the same before its first command: at most four large
+reads, each giving up after 200 ms. No USB reset is involved, which matters
+here more than usual — reset storms on this device are what froze the entire
+machine three times in August (see [`CHANGELOG.md`](CHANGELOG.md)).
 
 ### Exposure: the mistake that cost the most
 
@@ -236,7 +300,11 @@ acquisition parameter is chosen by measuring what it destroys, not by stopping a
 the first value where the image becomes visible.** Four different matching
 algorithms were tried and rejected before anyone measured the images themselves.
 
-### Measurements
+### Measurements (the correlation matcher)
+
+*Everything from here to [The stale background](#the-stale-background)
+describes the correlation matcher that was replaced. It stays because the
+reasoning that led away from it is the useful part.*
 
 Five fingers, three placements each. Placements 1 and 2 are enrolled, placement 3
 verifies — it never enters enrolment, otherwise the experiment would only measure
@@ -322,6 +390,8 @@ repeated.
 | **Swipe stitching** | The finger does not translate over the sensor; only pressure changes. See [Method notes](#method-notes). |
 | **Wider shift search** | Raises genuine scores, raises impostors more. |
 | **BLPOC** | 3 errors out of 25 vs. 1 for plain correlation. |
+| **Shifted correlation** (the matcher until 2026-11-12) | Works on a gallery of two, fails on a gallery of thirty: an impostor at 0.734 against a threshold of 0.55. Parallel ridges align with anybody's. |
+| **The feature matcher on raw frames** | 41% of genuine pairs above the best impostor, against 61% for the correlation. Exposure varies more between two touches than ridges do between two fingers. |
 
 **BLPOC** (band-limited phase-only correlation) deserves a note, because it is the
 textbook method for small-area sensors. It divides the cross-spectrum by its own
@@ -345,7 +415,7 @@ The driver lives inside a libfprint checkout:
 
 ```sh
 git clone https://gitlab.freedesktop.org/libfprint/libfprint.git libfprint-src
-cp driver/egis057e.[ch] libfprint-src/libfprint/drivers/
+cp driver/egis057e.[ch] driver/egis057e-matcher.[ch] libfprint-src/libfprint/drivers/
 ```
 
 Register it in two places:
@@ -355,7 +425,7 @@ Register it in two places:
 'egis057e': {},
 
 # libfprint/meson.build
-'egis057e' : files('drivers/egis057e.c'),
+'egis057e' : files('drivers/egis057e.c', 'drivers/egis057e-matcher.c'),
 ```
 
 Then build:
@@ -384,6 +454,7 @@ after thirty seconds of silence, handing the name back to the system service.
 From another terminal:
 
 ```sh
+fprintd-delete $USER                    # prints from before 2026-11-12 are refused
 fprintd-enroll -f right-index-finger    # 30 placements
 fprintd-verify -f right-index-finger
 ```
@@ -432,7 +503,7 @@ Environment=G_MESSAGES_DEBUG=libfprint-egis057e
 then
 
 ```sh
-journalctl -u fprintd -f | grep correlation
+journalctl -u fprintd -f | grep "best score"
 ```
 
 A rejection and a near-miss look identical from the outside, and the difference
@@ -445,14 +516,26 @@ count to two, lift.
 
 ## Known limitations
 
-- **The threshold rests on ten observations** with a margin of 0.065. It is the
+- **The threshold rests on twenty-one observations** of one person. It is the
   honest reading of what was seen, not a guarantee.
 - **No other person's finger has ever been presented to this sensor.** Every
-  impostor measurement is a different finger of the same hand, which is the
-  easiest impostor to reject.
-- **No serious FAR measurement.** See above.
-- **No `identify`.** The driver advertises only `FP_DEVICE_FEATURE_VERIFY`: the
-  margin between different fingers is not wide enough for one-against-many.
+  impostor measurement is a different finger of the same hand.
+- **No serious FAR measurement.** That takes thousands of comparisons across
+  many people.
+- **About one genuine placement in ten is rejected**, when it lands on skin the
+  enrolment did not cover. Lift and place again.
+- **Prints enrolled before 2026-11-12 are refused** with an explicit error: the
+  stored format changed with the matcher. Delete and enrol again.
+- **The matcher's provenance.** `egis057e-matcher.[ch]` comes from
+  [lagthedark/eh57e-libfprint](https://github.com/lagthedark/eh57e-libfprint)
+  (0BSD) and is, by its author's description, a reimplementation of a
+  proprietary engine. That rules this driver out of upstream libfprint as it
+  stands; a matcher built on an open method would be the way there.
+- **The matcher reads `EGIS057E_M_*` environment variables** for its internal
+  tunables. Inside `fprintd` only root sets those, but it is a knob that exists.
+- **Interrupting a verification mid-image has not been re-tested** since the
+  drain fix; eleven consecutive ordinary opens after it were clean.
+- **No `identify`.** The driver advertises only `FP_DEVICE_FEATURE_VERIFY`.
 - **No udev rule** is emitted for `1c7a:057e`; `fprintd` runs as root, so it has
   not been needed so far.
 - **No anti-spoofing.** The matcher only looks at ridge texture.
@@ -461,17 +544,25 @@ count to two, lift.
 
 Ordered by expected payoff per unit of effort:
 
-1. **Template update on successful verification.** Every accepted verification
-   adds its sample to the stored print, so coverage of the fingertip grows with
-   use. libfprint already has `FP_DEVICE_FEATURE_UPDATE_PRINT` for this. Costs
-   the user nothing.
-2. **Rotation tolerance.** Matching currently searches translations only, while a
-   resting finger easily rotates ±15°. Cheap to add — but it belongs to the same
-   family as the wider shift search, which the data rejected, so it has to be
-   measured rather than assumed.
-3. **Learned descriptors.** What the commercial sensors actually do, and genuine
-   state of the art. Needs training data and does not sit comfortably inside a
-   driver.
+1. **Template update on successful verification.** Every placement accepted
+   with a comfortable score joins the stored print, so coverage of the fingertip
+   grows with use. It is what the vendor engine does, libfprint already has
+   `FP_DEVICE_FEATURE_UPDATE_PRINT` for it, and it is aimed squarely at the one
+   kind of error measured so far: a genuine finger landing off the enrolled
+   area.
+2. **A two-witness rule.** Accept only when two *different* enrolled placements
+   agree, or two consecutive frames do. An impostor's best score is one lucky
+   placement out of thirty; asking for a second independent one costs a genuine
+   finger little. The log already prints the second-best score for exactly this
+   measurement.
+3. **Score normalisation.** Judge a score against how that same touch scores
+   against other people's prints, instead of against one fixed number.
+4. **Other people's fingers.** Not an algorithm, but the measurement everything
+   above is waiting for.
+5. **An open matcher.** SIFT-style matching (SIGFM) is the community's answer
+   for small sensors and would remove the provenance question.
+6. **Learned descriptors.** What phones do, and the genuine state of the art.
+   Needs training data that one person's fingers cannot supply.
 
 ## Repository layout
 
@@ -525,14 +616,16 @@ template is the place to start, even if nothing works yet.
 Read [SECURITY.md](SECURITY.md) before relying on this for anything.
 
 In short: the false-acceptance rate of this matcher **is not known** — it has
-been measured against twenty impostor comparisons, which cannot establish a
-rate. There is no liveness detection of any kind. The sensor images about 15 mm²
+been measured against ten impostor placements of one person's other finger,
+which cannot establish a rate. There is no liveness detection of any kind. The sensor images about 15 mm²
 of skin, which is a hard limit on how much can be distinguished. Treat it as a
 convenience in front of a password you still know, not as a security boundary.
 
 ## License
 
 **LGPL-2.1-or-later**, the same as libfprint. Full text in [LICENSE](LICENSE).
+`driver/egis057e-matcher.[ch]` are third-party and carry their own 0BSD
+notice.
 
 The proprietary Egis/Microsoft binaries used as a reference during reverse
 engineering are **not in this repository** and are not redistributable.
@@ -542,5 +635,10 @@ engineering are **not in this repository** and are not redistributable.
 - The [libfprint](https://gitlab.freedesktop.org/libfprint/libfprint) project and
   its existing Egis drivers, which provided exactly the right wrong starting
   point.
+- [lagthedark](https://github.com/lagthedark/eh57e-libfprint), whose matcher
+  this driver now uses, and the authors of the EH576 drivers
+  ([PHILIPPDEV5396](https://github.com/PHILIPPDEV5396/libfprint-egis0576),
+  [tsteppy](https://github.com/tsteppy/egistec-eh576-libfprint)), whose
+  unusually honest accuracy write-ups set the standard for this one.
 - NIST, for NBIS and for making it verifiable — even when the answer is "this
   method does not work here".

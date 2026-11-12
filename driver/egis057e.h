@@ -251,28 +251,104 @@
 /*
  * Finger detection.
  *
- * Measured with the sensor idle and then with a finger resting on it, thirty
- * frames each, taking the per-pixel median:
+ * Measured on 2026-08-26 at the working point below (gain 0x01), thirty-plus
+ * frames each, replicating the driver flow exactly:
  *
- *   idle    mean  71.3   spatial deviation 35.8
- *   finger  mean 100.8   spatial deviation 90.6
+ *   empty   deviation 14.7 [14.6-14.8]   distance from background 1.6
+ *   finger  deviation 44.7               distance from background 38.6
  *
- *   idle vs idle    mean absolute difference  2.4
- *   finger vs idle  mean absolute difference 80.9
- *
- * So the mean absolute difference from the background separates the two by
- * more than thirty times. A threshold of 15 sits far from both.
+ * The distance from the background separates the two by more than a factor of
+ * nine below and two above, so a threshold of 15 sits far from both. (The
+ * numbers quoted in earlier revisions - idle 35.8, finger 80.9 - predate the
+ * gain fix in commit 6204135 and were taken at gain 0x0a.)
  */
 #define EGIS057E_FINGER_THRESHOLD 15
 
 /*
  * A frame whose spatial deviation is this high cannot be background: it
  * already has a finger on it. Used to avoid learning a finger as background.
+ *
+ * Re-derived from the same 2026-08-26 measurements: the empty sensor sits at
+ * 14.7 and a resting finger at 44.7, so the old value of 60 let the finger
+ * through the guard and into the background. Halfway between the two
+ * populations, with four times the empty spread of 0.1 as margin:
  */
-#define EGIS057E_BG_MAX_DEV 60
+#define EGIS057E_BG_MAX_DEV 30
 
 /* Frames averaged into the background reference. */
 #define EGIS057E_BG_FRAMES 8
+
+/*
+ * How many consecutive frames PH_WAIT_OFF may see above FINGER_THRESHOLD
+ * before the background is declared stale and re-learned from scratch.
+ *
+ * At the observed ~90 frames per second this is about ten seconds: long
+ * enough that nobody legitimately resting a finger while waiting triggers
+ * it, short enough that a session poisoned by a background learned around a
+ * finger recovers instead of staying deaf until the next reopen. The guard
+ * above keeps the fresh learning honest even if the finger never leaves.
+ */
+#define EGIS057E_BG_STUCK_FRAMES 900
+
+/*
+ * The feature matcher.
+ *
+ * egis057e-matcher.c is taken from https://github.com/lagthedark/eh57e-libfprint
+ * (0BSD), where it is described as a reimplementation of the vendor engine:
+ * interest points, binary descriptors, and a shift-and-rotation agreement
+ * between the matched pairs. It replaces the shifted correlation as the
+ * decision; the correlation survives only to refuse an enrolment placement
+ * identical to the previous one.
+ *
+ * Measured on 2026-11-12 on the labelled captures of 2026-08-19 (gain 0x01,
+ * index and middle of one hand, three placements each, four samples per
+ * placement, each a forty-frame average with the background removed - exactly
+ * what make_image produces). Pairs from the same placement are excluded.
+ *
+ *                      genuine min / median     impostor median / max
+ *   this matcher          724  /  7174              1783  /  3712
+ *   correlation (DoG)   0.095  /  0.436             0.211 /  0.377
+ *
+ * By placement pair, which is the independent unit (six genuine, nine
+ * impostor): five of the six genuine pairs have their median above every
+ * impostor score (4431 to 14074), the sixth sits at 3157, inside the impostor
+ * range. With the correlation 61% of genuine comparisons cleared the best
+ * impostor; here 75%.
+ *
+ * 5000 is a third above the highest impostor seen. That is ONE person, TWO
+ * fingers, and a gallery of one: the driver takes the best over
+ * EGIS057E_NR_ENROLL_STAGES placements, and the best of N draws grows with N
+ * for an impostor too, which this number does not account for. It is a
+ * starting point to be re-derived on hardware, not a measured error rate.
+ *
+ * Re-derived on hardware the same evening, right index enrolled with thirty
+ * placements, best score over the whole gallery, labels declared by the user
+ * before each series:
+ *
+ *   right index  (enrolled)      4859  7118  8782  8907 10640 11904
+ *                               15505 15636 16016 16953 24104
+ *   right middle (NOT enrolled)  2340  2639  2658  2763  2960  3083
+ *                                3145  3761  4669  4898
+ *
+ * The gallery did raise the impostor ceiling, from 3712 against one placement
+ * to 4898 against thirty, and 5000 was left two percent above it. Apart from
+ * one genuine placement at 4859, which no threshold above the impostors can
+ * save, nothing lies between 4898 and 7118: 6000 sits in that gap, rejects
+ * the same one genuine in eleven, and clears the worst impostor by a fifth.
+ *
+ * Twenty-one observations, one person, the impostor a finger of the same
+ * hand. Not an error rate.
+ */
+#define EGIS057E_FEAT_THRESHOLD 6000
+
+/* Level and deviation every placement is brought to before feature
+ * extraction. 40 against 55 changes nothing measurable (d' 1.70 and 1.72). */
+#define EGIS057E_IMG_MEAN  128.0
+#define EGIS057E_IMG_SIGMA 40.0
+
+/* Version of the stored print. 1 was the bare "aay" of band-passed signed
+ * templates used by the correlation matcher, never written with a version. */
+#define EGIS057E_TPL_VERSION 2
 
 /* Templates are stored as signed bytes: the pattern is normalised to unit
  * deviation, clipped at four deviations and scaled by 32, which keeps a whole
@@ -292,6 +368,16 @@ typedef struct
 } Egis057ePkt;
 
 #define EGIS057E_FLUSH { 0, { 0 } }
+
+/*
+ * The drain before init: at most this many reads, each large enough for a
+ * whole stale block (5320 bytes) plus the remainder of an interrupted one,
+ * each giving up quickly when the sensor has nothing pending. A multiple of
+ * the 512-byte packet size, so a full block can never overflow it.
+ */
+#define EGIS057E_DRAIN_READS   4
+#define EGIS057E_DRAIN_SIZE    16384
+#define EGIS057E_DRAIN_TIMEOUT 200
 
 /*
  * The init sequence, as captured from the vendor driver. The last line is

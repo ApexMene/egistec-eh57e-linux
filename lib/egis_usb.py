@@ -35,11 +35,11 @@ FRAME = W * H              # 0xf96 = 3990 pixel
 NFRAMES = 3                # il driver ne prende tre
 THRESH = 0x20              # soglia di binarizzazione del driver
 
-# Il trasporto impacchetta 3 byte di payload ogni parola da 4 byte (il
-# quarto e' sempre 0). Per ottenere FRAME pixel bisogna quindi chiedere
-# FRAME*4/3 byte e scartare il byte di padding: verificato, chiedendo 5320
-# tornano esattamente 3990 byte non nulli.
-WIRE = FRAME * 4 // 3      # 5320
+# Il blocco sul filo e' lungo 5320 byte ma solo i primi 3990 sono pixel: il
+# resto e' costante (117) fino alla fine, nessun padding intrecciato alle
+# righe - l'assunzione contraria rese ogni cattura illeggibile nel driver,
+# vedi egis057e.c.
+WIRE = 5320
 
 # guadagno e offset dell'AFE, trovati con afe-sweep.py
 REG_GAIN, REG_OFFSET = 0x12, 0x0F
@@ -56,6 +56,11 @@ INIT_SEQUENCE = [
     "45474953612000", "45474953612145", "45474953600000", "45474953600100",
     "45474953632c020057", "45474953602d00", "45474953626703",
     "45474953600f00", "45474953632c020013",
+    # L'init lascia il guadagno a zero: senza questi due pacchetti, identici
+    # agli ultimi due della tabella del driver, l'immagine esce piatta
+    # (dev ~2) e ogni misura fatta con questa lib non vale nulla.
+    "45474953611201",   # reg 0x12 = gain 0x01
+    "45474953610f20",   # reg 0x0f = offset 0x20
 ]
 
 
@@ -127,14 +132,6 @@ def init(dev):
     return ok, len(INIT_SEQUENCE)
 
 
-def depad(wire):
-    """Toglie il byte di padding da ogni parola di 4. La fase e' quella
-    del residuo interamente nullo, non si assume che sia sempre la stessa."""
-    counts = [sum(1 for b in wire[r::4] if b == 0) for r in range(4)]
-    pad = max(range(4), key=lambda r: counts[r])
-    return bytes(b for i, b in enumerate(wire) if i % 4 != pad)
-
-
 def get_frame(dev):
     """Un frame secondo il flusso del driver: arma, leggi esattamente
     WIRE byte, chiudi. Legge a blocchi finche' non ha la lunghezza esatta,
@@ -156,7 +153,7 @@ def get_frame(dev):
     wr(dev, 0x2D, 0x20)
     if len(buf) < WIRE:
         return b""
-    return depad(bytes(buf[:WIRE]))[:FRAME]
+    return bytes(buf[:FRAME])
 
 
 def burst(dev):
@@ -207,9 +204,14 @@ def main():
     ok, tot = init(dev)
     print(f"init: {ok}/{tot}")
 
-    gain = int(sys.argv[2], 0) if len(sys.argv) > 2 else 0x08
-    wr(dev, REG_GAIN, gain)
-    print(f"guadagno reg {REG_GAIN:#04x} = {gain:#04x}")
+    # L'init ora porta il sensore al punto di lavoro del driver (gain 0x01,
+    # offset 0x20); il parametro opzionale serve solo a forzare altro.
+    if len(sys.argv) > 2:
+        gain = int(sys.argv[2], 0)
+        wr(dev, REG_GAIN, gain)
+        print(f"guadagno reg {REG_GAIN:#04x} = {gain:#04x}")
+    else:
+        print("punto di lavoro dall'init (gain 0x01, offset 0x20)")
 
     frames = burst(dev)
     for i, f in enumerate(frames):

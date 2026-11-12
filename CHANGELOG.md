@@ -4,6 +4,112 @@ Formato: data · cosa provato · esito (✅ funziona / ❌ non funziona / ⏳ da
 
 ---
 
+## 2026-11-12 — Matcher sostituito: punti caratteristici al posto della correlazione
+
+Punto di partenza: la correlazione non separa dito giusto da dito sbagliato (README: medio non iscritto a 0.734 contro trenta modelli). Prima di riscrivere, guardato cosa è uscito online da agosto.
+
+| Voce | Dettaglio | Esito |
+|---|---|---|
+| Driver altrui per `1c7a:057e` | `lagthedark/eh57e-libfprint` (matcher = reimplementazione del motore Egis di Windows, libfprint 1.94.100), `Cruise42/eh57e-linux-driver` (falso positivo ammesso), `babcockdavidr/...` (alpha). Per il gemello EH576 (70×57): `PHILIPPDEV5396/libfprint-egis0576`, `tsteppy/egistec-eh576-libfprint` | ✅ clonati i primi due candidati in `vendor/` |
+| Confronto offline su `data/g01-*` (gain `0x01`, indice e medio, 3 appoggi ciascuno, 4 campioni per appoggio, coppie dello stesso appoggio escluse) | Correlazione DoG: genuini min 0.095 / mediana 0.436, impostori max 0.377, 61% dei genuini sopra il miglior impostore. Matcher lagthedark su frame grezzi: 41%. **Stesso matcher su media di 40 frame, fondo sottratto, livello e deviazione fissati (128 / 40): genuini mediana 7174, impostori max 3712, 75%** | ✅ misurato |
+| Per coppia di appoggi (unità indipendente: 6 genuine, 9 impostori) | 5 genuine su 6 con mediana sopra ogni impostore (4431–14074); la sesta (medio-1/medio-2) a 3157, dentro la fascia impostori (max 3712) | ⚠️ campione minuscolo |
+| Il driver di lagthedark passa al matcher i frame **grezzi** | Usa il fondo solo per la presenza del dito. Sui nostri dati è la variante peggiore: per questo non si adotta il suo driver intero ma solo il matcher, alimentato dal nostro appoggio mediato e senza fondo | ✅ |
+| `driver/egis057e-matcher.[ch]` | Copiati da lagthedark (0BSD), non modificati | ✅ |
+| `driver/egis057e.c` | `make_image` (appoggio → immagine 8 bit normalizzata); iscrizione salva le immagini; verifica = miglior punteggio a feature su tutti gli appoggi iscritti. La correlazione resta solo per rifiutare in iscrizione un appoggio identico al precedente | ✅ compilato |
+| Formato impronta | Da `aay` a `(qaay)` con versione 2. **Le impronte iscritte prima vanno rifatte**: il driver le rifiuta con un errore esplicito invece di confrontarle | ✅ |
+| Soglia `EGIS057E_FEAT_THRESHOLD = 5000` | Un terzo sopra il miglior impostore visto. Una persona, due dita, galleria di uno: non tiene conto del massimo su 30 appoggi. Punto di partenza, non un tasso d'errore | ⏳ da ricavare sul ferro |
+| Tempo | Estrazione ~26 ms, confronto ~4 ms → verifica contro 30 appoggi ~0.9 s | ✅ misurato |
+| Build | `libfprint-2.so.2.0.0` e `egis057e-matchtest` ricompilati puliti con `/usr/bin/ninja` | ✅ |
+| Prova sul sensore | Non fatta: serve reinstallare (root) e il dito | ⏳ |
+
+### Prova sul ferro (stessa sera, fprintd temporaneo via `scripts/run-fprintd-local.sh`, PAM sganciato)
+
+| Voce | Dettaglio | Esito |
+|---|---|---|
+| Iscrizione indice destro | 30 appoggi su 30 in ~30 s, un solo "sposta il dito". Presenza dito pulita: distanza 1.6 libero, 25–54 con dito | ✅ |
+| Indice (iscritto), 11 verifiche | 4859 7118 8782 8907 10640 11904 15505 15636 16016 16953 24104 | ✅ 10/11 a soglia 5000 |
+| Medio (NON iscritto), 10 verifiche | 2340 2639 2658 2763 2960 3083 3145 3761 4669 4898 | ✅ 0/10 accettati |
+| Effetto galleria confermato | Il miglior impostore sale da 3712 (un appoggio, offline) a 4898 (trenta appoggi): 5000 restava sopra del 2% | ⚠️ |
+| Soglia 5000 → **6000** | Fra 4898 e 7118 non c'è nulla tranne il genuino a 4859, che nessuna soglia sopra gli impostori salva. 6000 rifiuta lo stesso 1 su 11 e stacca il peggior impostore del 22% | ✅ compilato |
+| Scartate | 5 verifiche fra le due serie (14480 13165 14235 18255 1120) e una di controllo (2515): etichetta non dichiarata | — |
+
+**Incidente: sensore bloccato dopo un Ctrl-C.** Una verifica annullata a metà immagine (21:22:26) ha lasciato nel sensore 6344 byte in coda; da lì ogni apertura andava in `transfer timed out`, anche dopo il riavvio di fprintd, perché l'init legge 64 byte alla volta. Nessun reset USB nel kernel, device sempre elencato. Sbloccato da utente con letture da 16 KB su `0x82` (nessun reset, nessun `set_configuration`): dopo lo svuotamento `60 00 00` risponde `SIGE 00 aa 01`. **Correzione**: stato `INIT_DRAIN` prima dell'init (max 4 letture da 16384 byte, 200 ms). Verificato sul ferro: 11 aperture consecutive pulite; a riposo il sensore restituisce 7 byte (ultima risposta) o l'ultimo blocco da 5320. ⏳ Non riprovato il Ctrl-C a metà immagine dopo la correzione.
+
+**Messo in servizio** (su richiesta di Gianluca, stessa sera): `scripts/install.sh` → libreria in `/usr/local/lib/egis057e` (precedente salvata come `.bak.20261112-213110`); `authselect enable-feature with-fingerprint` → impronta di nuovo in PAM. Per tornare indietro: `sudo authselect disable-feature with-fingerprint`. README riscritto sul matcher nuovo.
+
+**Watchdog**: `/etc/systemd/system.conf.d/99-watchdog.conf` contiene `RuntimeWatchdogSec=off`, non i 20 s scritti qui il 26/08. Lasciato com'è.
+
+**Errore di misura corretto in corsa**: il primo confronto sul set saturato dava impostori a correlazione 1.0. Erano frame senza dito (i file `set-*` iniziano con 24–206 frame a sensore libero), non un difetto dei matcher. Rifatto selezionando solo i frame a distanza dal fondo > 20.
+
+**Aperto**: (1) soglia e numero di appoggi vanno rimisurati sul ferro con galleria piena; (2) il set `set-*` è saturato e non decide nulla; (3) nessun dito di un'altra persona è mai stato provato; (4) il matcher legge variabili d'ambiente `EGIS057E_M_*` per le sue soglie interne; (5) provenienza: è la reimplementazione di un motore proprietario, da decidere prima di pubblicarlo nel repository pubblico; (6) README ancora descrive la correlazione, da aggiornare dopo la prova sul ferro.
+
+---
+
+## 2026-08-26 — Fix sensore sordo + auto-guarigione fondo
+
+Sessione Claude Code precedente interrotta dal limite di spesa prima di toccare il codice; qui si conclude il piano che aveva lasciato in sospeso.
+
+| Voce | Dettaglio | Esito |
+|---|---|---|
+| Causa del "sensore sordo" confermata | `BG_MAX_DEV = 60` era derivato da misure a gain `0x0a` (pre-commit 6204135). A gain `0x01`: vuoto dev **14.7**, dito dev **44.7** → il dito passava la guardia e veniva imparato come fondo in `dev_open` → distanza permanente ~38 > soglia 15 → `PH_WAIT_OFF` non si chiude mai | ✅ confermato con numeri |
+| `BG_MAX_DEV` 60 → 30 (`egis057e.h`) | Riderivato: metà strada tra le due popolazioni misurate oggi, margine 4× la dispersione del vuoto (0.1) | ✅ |
+| Commenti soglie aggiornati (`egis057e.h`) | I vecchi numeri nel commento (idle 35.8 / finger 80.9) erano pre-fix guadagno: sostituiti con le misure 2026-08-26 | ✅ |
+| Auto-guarigione fondo (`egis057e.c`) | `PH_WAIT_OFF` conta i frame consecutivi sopra soglia: a `EGIS057E_BG_STUCK_FRAMES` (900 ≈ 10 s) ri-apprende il fondo inline (`bg_relearn`), poi torna in attesa invece di completare. Se un dito resta davvero appoggiato, la guardia dev lo scarta e il learning fallisce *rumorosamente* invece di lasciare il driver sordo per tutta la sessione | ✅ compilato, ⏳ test campo |
+| Traccia debug estesa | Riga ogni mezzo secondo ora include il contatore `blocco` | ✅ |
+| `lib/egis_usb.py` riparata | Mancavano i due pacchetti finali gain/offset (`61 12 01`, `61 0f 20`) → girava a gain 0, immagine piatta, ogni misura carta straccia. Aggiunti alla `INIT_SEQUENCE`. `depad()` eliminata: i pixel sono i primi 3990 byte del blocco, nessun padding intrecciato (stessa scoperta del driver C). Default gain non sovrascrive più il punto di lavoro dell'init | ✅ py_compile OK |
+| Path matchtest in meson.build | Il repositoy-reorg aveva spostato `matchtest.c` in `tools/matching/` senza aggiornare `libfprint-src/libfprint/meson.build` → grafo ninja rotto, nessuna build possibile dal 19/08 | ✅ |
+| Build verificata | `libfprint-2.so.2.0.0` ricompilata e linkata pulita sotto `-Werror`; stringhe nuove presenti nel binario | ✅ |
+
+**Nota ninja**: `~/.local/bin/ninja` (fork kitware jobserver-pipe) risponde "no work to do" anche con oggetti mancanti — usare `/usr/bin/ninja`.
+
+**Prossimo passo (serve Gianluca)**: reinstallare con `scripts/install.sh` e provare verify/enroll reali; poi auto-esposizione (anello di controllo gain/offset), ricattura dataset post-fix e riesecuzione dei quattro metodi matcher giudicati sul dataset rotto.
+
+### ⚠️ Il driver stava piantando l'intero PC — analisi post-mortem (sera del 26/08)
+
+Il "reinstallare e provare verify reali" del passo sopra è stato fatto alle
+**11:38:15**; alle **12:12:21** la macchina si è piantata del tutto (schermo
+fermo, niente log, recuperata solo staccando la batteria). Non era la prima volta.
+
+`journalctl --list-boots`: i boot finiti bruscamente sono esattamente 3, e tutti
+e tre correlano con storm di reset USB sul sensore (`usb 3-5` = `1c7a:057e`):
+
+| Boot | Fine | Reset `usb 3-5` | Cosa stavo facendo |
+|---|---|---|---|
+| -12 | 05/08 21:43 | 57 | swap pacchetti libfprint egismoc da COPR |
+| -4 | 20/08 21:28 | **145** | `probe4-057e.py`, probing USB raw — morto su `PM: suspend entry (s2idle)` |
+| -3 | 26/08 12:12 | 2 | build di oggi deployata 11:38, verify falliti 11:45–11:58 |
+
+I boot chiusi puliti hanno **0 reset**. Escluse tutte le altre piste: nessun OOM,
+nessun MCE, nessun throttling termico, nessun errore iwlwifi, BIOS già aggiornato.
+
+**Causa**: `fprintd.service` carica questo driver via drop-in
+(`LD_LIBRARY_PATH=/usr/local/lib/egis057e`), e `authselect` aveva
+`with-fingerprint` attivo → `pam_fprintd` in sudo, GDM, polkit e cron. Quindi il
+driver WIP veniva invocato **decine di volte al giorno fuori dai test** (nel
+journal si vede `PAM:setcred grantors=pam_env,pam_fprintd` alle 12:00:00 in
+punto, da `crond`). Quando il driver manda il sensore in wedge, l'host
+controller `xhci_hcd` va in reset storm e si porta dietro tutta la macchina.
+
+**Lezione di metodo**: un driver in sviluppo non va cablato dentro
+l'autenticazione di sistema. Un bug che dovrebbe restare confinato al test
+diventa un freeze totale, e per giunta in momenti scollegati dalla sessione di
+lavoro — il che rende il nesso causale invisibile (tre settimane di freeze
+"misteriosi" prima di collegarli al progetto).
+
+**Mitigazioni applicate** (dettaglio in `Personal/fedora44-setup.md` del vault):
+
+- `authselect disable-feature with-fingerprint` — driver sganciato da PAM.
+  Resta testabile a mano; per riattivarlo quando il matcher sarà affidabile:
+  `sudo authselect enable-feature with-fingerprint`.
+- Watchdog hardware acceso (`RuntimeWatchdogSec=20s`) — era spento: ora un wedge
+  si riavvia da solo in 20s invece di richiedere lo stacco della batteria.
+- udev `99-egis-fp-nosuspend.rules` — niente autosuspend USB sul sensore.
+
+**Da fare**: spostare il probing USB raw dentro `vm/` con USB passthrough. Un
+device in wedge ammazza la VM, non l'host — ed è l'unico modo di iterare sul
+protocollo senza rischiare la sessione di lavoro.
+---
+
 ## Timeline sessione 2026-08-18 (sera)
 
 | Ora | Evento | Esito |
