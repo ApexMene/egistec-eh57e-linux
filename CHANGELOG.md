@@ -37,6 +37,8 @@ Punto di partenza: la correlazione non separa dito giusto da dito sbagliato (REA
 
 **Messo in servizio** (su richiesta di Gianluca, stessa sera): `scripts/install.sh` → libreria in `/usr/local/lib/egis057e` (precedente salvata come `.bak.20261112-213110`); `authselect enable-feature with-fingerprint` → impronta di nuovo in PAM. Per tornare indietro: `sudo authselect disable-feature with-fingerprint`. README riscritto sul matcher nuovo.
 
+**Impronte vere tolte dal repository pubblico** (richiesta di Gianluca): `banner.png`, `sensor.png`, `placements.png`, `features.png` mostravano appoggi reali. Ora sono generate da `synthetic_finger()` in `docs/figures.py`. Storia riscritta con `git filter-repo` togliendo da tutti i commit `docs/{appoggi,banner,features,placements,sensore,sensor}.png` e `usbmon-init.log` (42 MB, traffico USB con i primi 32 byte di ogni blocco immagine), poi push forzato: gli hash dei commit sono cambiati tutti da `d2c87d4` in poi, i riferimenti in questo file e nel driver sono aggiornati. ⚠️ Subito dopo il push i vecchi commit erano ancora raggiungibili su GitHub per hash diretto: la riscrittura non li cancella dal server. Copia della storia precedente: `scratch/pre-rewrite-20261112.bundle` (solo locale, contiene le immagini).
+
 **Watchdog**: `/etc/systemd/system.conf.d/99-watchdog.conf` contiene `RuntimeWatchdogSec=off`, non i 20 s scritti qui il 26/08. Lasciato com'è.
 
 **Errore di misura corretto in corsa**: il primo confronto sul set saturato dava impostori a correlazione 1.0. Erano frame senza dito (i file `set-*` iniziano con 24–206 frame a sensore libero), non un difetto dei matcher. Rifatto selezionando solo i frame a distanza dal fondo > 20.
