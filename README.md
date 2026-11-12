@@ -202,6 +202,12 @@ So the driver does not hand an image to libfprint. It implements its own matcher
    common shift and rotation** are kept, and the score is summed over those.
    The best score over all enrolled placements is compared with **6000**.
 
+   <div align="center">
+
+   ![what the matcher is given and what it finds](docs/features.png)
+
+   </div>
+
 ### The matcher that replaced the correlation
 
 Until 2026-11-12 step 4 was a normalised cross-correlation of band-passed
@@ -227,6 +233,12 @@ excluded):
 | feature matcher on **raw** frames | 4010 | 4260 | 41% |
 | feature matcher on averaged, background-subtracted, level-fixed frames | **7174** | **3712** | **75%** |
 
+<div align="center">
+
+![three matchers on the same captures](docs/matchers.png)
+
+</div>
+
 Two things came out of that table. The feature matcher is better — and fed raw
 frames, the way its own driver feeds it, it is *worse* than what it replaces.
 The gain is in the pairing: their matcher, this driver's acquisition. So only
@@ -240,6 +252,12 @@ first threshold, 5000, had been set from the offline table and was left two
 percent above it. Nothing lies between 4898 and 7118 except one genuine
 placement at 4859 that no threshold above the impostors can save, so the
 threshold moved to 6000.
+
+<div align="center">
+
+![scores on hardware](docs/scores.png)
+
+</div>
 
 A verification against thirty placements costs about 0.9 s: 26 ms to extract
 the features of one image, 4 ms to compare two sets.

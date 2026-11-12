@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Figures for the README, generated from the real captures.
 
-Nothing here is an illustration: every image comes out of data/set-*.bin, that
-is, out of frames that actually left the sensor. Regenerate with
+Nothing here is an illustration: every image comes out of data/*.bin, that is,
+out of frames that actually left the sensor, and every number in the score
+figures out of the driver's own log. Regenerate with
 `python3 docs/figures.py`.
 """
 
+import ctypes
 import os
+import subprocess
+import tempfile
 
 import matplotlib
 matplotlib.use("Agg")
@@ -25,6 +29,29 @@ DATA = os.path.join(ROOT, "data")
 INK = "#e6e6e6"
 BG = "#0d1117"
 ACCENT = "#58a6ff"
+MUTED = "#898781"
+GRID = "#21262d"
+# The two series of the score figures. Checked on this background for
+# lightness, chroma, contrast and colour-blind separation (worst pair 26.8).
+ENROLLED = "#3987e5"
+IMPOSTOR = "#d95926"
+
+# Best score over the 30 enrolled placements, read from the driver's own log
+# on 2026-11-12 (CHANGELOG.md has the session). The finger was declared before
+# each series; verifications without a declared finger are not here.
+SCORES_INDEX = [4859, 7118, 8782, 8907, 10640, 11904, 15505, 15636, 16016,
+                16953, 24104]
+SCORES_MIDDLE = [2340, 2639, 2658, 2763, 2960, 3083, 3145, 3761, 4669, 4898]
+THRESHOLD = 6000
+
+# Share of genuine comparisons scoring above the best impostor, offline, on
+# data/g01-* (two fingers, three placements each, same-placement pairs
+# excluded). Same source.
+MATCHERS = [
+    ("feature matcher\non averaged, background-free frames", 75),
+    ("shifted correlation\n(the matcher until 2026-11-12)", 61),
+    ("feature matcher\non raw frames", 41),
+]
 
 plt.rcParams.update({
     "figure.facecolor": BG,
@@ -188,6 +215,157 @@ def fig_threshold(bg):
     plt.close(fig)
 
 
+def fig_scores():
+    """The two fingers on hardware: where each placement scored."""
+    fig, ax = plt.subplots(figsize=(8.6, 3.0))
+
+    for y, scores, colour in ((1, SCORES_INDEX, ENROLLED),
+                              (0, SCORES_MIDDLE, IMPOSTOR)):
+        # Neighbouring scores are nudged apart vertically so that no dot
+        # hides another; the horizontal position is the measurement.
+        last, lift = -1e9, 0
+        for v in sorted(scores):
+            lift = (lift + 1) % 3 if v - last < 420 else 0
+            ax.plot(v, y + (lift - 1) * 0.16 * (lift > 0) + 0.16 * (lift == 1),
+                    "o", ms=9, color=colour, mec=BG, mew=2, zorder=3)
+            last = v
+
+    ax.axvline(THRESHOLD, color=INK, lw=1.2, zorder=2)
+    ax.text(THRESHOLD + 250, 1.62, f"threshold {THRESHOLD}", fontsize=8,
+            color=INK, va="center")
+    ax.annotate("4898\nbest impostor", (4898, 0), (4898, -0.72), fontsize=7.5,
+                color=MUTED, ha="center", va="top",
+                arrowprops=dict(arrowstyle="-", color=MUTED, lw=0.8))
+    ax.annotate("4859\nthe one rejected", (4859, 1), (2900, 1.42), fontsize=7.5,
+                color=MUTED, ha="center", va="center",
+                arrowprops=dict(arrowstyle="-", color=MUTED, lw=0.8))
+
+    ax.set_yticks([1, 0])
+    ax.set_yticklabels(["right index\nenrolled · 11 placements",
+                        "right middle\nnot enrolled · 10 placements"],
+                       fontsize=8)
+    ax.set_ylim(-1.25, 1.85)
+    ax.set_xlim(0, 25500)
+    ax.set_xlabel("best score over the 30 enrolled placements")
+    ax.xaxis.grid(True, color=GRID, lw=1)
+    ax.set_axisbelow(True)
+    ax.tick_params(length=0)
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_title("On hardware: 10 of 11 genuine placements accepted, "
+                 "0 of 10 impostor placements", fontsize=9, color=ACCENT)
+    fig.tight_layout()
+    fig.savefig(f"{HERE}/scores.png", dpi=160, facecolor=BG)
+    plt.close(fig)
+
+
+def fig_matchers():
+    """Offline comparison of the three ways of scoring the same captures."""
+    fig, ax = plt.subplots(figsize=(8.6, 2.5))
+    names = [m[0] for m in MATCHERS][::-1]
+    values = [m[1] for m in MATCHERS][::-1]
+
+    ax.barh(range(len(values)), values, height=0.42, color=ENROLLED)
+    for i, v in enumerate(values):
+        ax.text(v + 1.2, i, f"{v}%", va="center", fontsize=9, color=INK)
+
+    ax.set_yticks(range(len(names)))
+    ax.set_yticklabels(names, fontsize=8)
+    ax.set_xlim(0, 100)
+    ax.set_xlabel("genuine comparisons scoring above the best impostor")
+    ax.xaxis.grid(True, color=GRID, lw=1)
+    ax.set_axisbelow(True)
+    ax.tick_params(length=0)
+    for side in ("top", "right", "left"):
+        ax.spines[side].set_visible(False)
+    ax.set_title("Same captures, three matchers: the gain is in the pairing",
+                 fontsize=9, color=ACCENT)
+    fig.tight_layout()
+    fig.savefig(f"{HERE}/matchers.png", dpi=160, facecolor=BG)
+    plt.close(fig)
+
+
+class _Feature(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_uint16), ("y", ctypes.c_uint16),
+                ("orient", ctypes.c_uint8), ("bucket", ctypes.c_uint8),
+                ("polarity", ctypes.c_uint8), ("angle", ctypes.c_uint16),
+                ("desc", ctypes.c_uint8 * 64)]
+
+
+class _FeatureSet(ctypes.Structure):
+    _fields_ = [("n", ctypes.c_int), ("f", _Feature * 512),
+                ("chan_w", ctypes.c_int), ("chan_h", ctypes.c_int),
+                ("chan_sm", ctypes.c_void_p), ("chan_ix", ctypes.c_void_p),
+                ("chan_iy", ctypes.c_void_p)]
+
+
+def driver_features(image):
+    """Interest points of an 8-bit image, from the driver's own matcher.
+
+    driver/egis057e-matcher.c is compiled as it is into a throwaway shared
+    object and called directly, so the figure shows what the driver computes
+    and not a Python lookalike of it.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        so = os.path.join(tmp, "matcher.so")
+        subprocess.run(["cc", "-O2", "-shared", "-fPIC", "-o", so,
+                        os.path.join(ROOT, "driver", "egis057e-matcher.c"),
+                        "-lm"], check=True)
+        lib = ctypes.CDLL(so)
+        fs = _FeatureSet()
+        buf = (ctypes.c_uint8 * (W * H)).from_buffer_copy(image.tobytes())
+        lib.egis057e_m_extract(buf, W, H, ctypes.byref(fs))
+        sx, sy = W / fs.chan_w, H / fs.chan_h
+        pts = [(fs.f[i].x * sx, fs.f[i].y * sy, fs.f[i].angle)
+               for i in range(fs.n)]
+        lib.egis057e_m_feature_set_clear(ctypes.byref(fs))
+    return pts
+
+
+def fig_features():
+    """One placement the way the matcher receives it, and what it finds."""
+    bg = np.fromfile(f"{DATA}/g01-fondo.bin",
+                     dtype=np.uint8).astype(np.float64).reshape(H, W)
+    a = np.fromfile(f"{DATA}/g01-indice-3.bin", dtype=np.uint8)
+    frames = a.reshape(-1, H, W).astype(np.float64)
+    raw = frames[150]
+
+    # What make_image() does in the driver: forty frames averaged, background
+    # removed, mean 128 and deviation 40, eight bits.
+    avg = frames[130:170].mean(axis=0) - bg
+    img = np.clip(np.rint((avg - avg.mean()) / avg.std() * 40 + 128), 0, 255)
+    img = img.astype(np.uint8)
+    pts = driver_features(img)
+
+    fig, ax = plt.subplots(1, 3, figsize=(9, 3.0))
+    ax[0].imshow(raw, cmap="bone", interpolation="nearest", vmin=0, vmax=255)
+    ax[0].set_title("one raw frame", fontsize=8)
+    ax[1].imshow(img, cmap="bone", interpolation="nearest", vmin=0, vmax=255)
+    ax[1].set_title("40 frames averaged,\nbackground removed, level fixed",
+                    fontsize=8)
+    ax[2].imshow(img, cmap="bone", interpolation="nearest", vmin=0, vmax=255,
+                 alpha=0.55)
+    for x, y, ang in pts:
+        t = np.deg2rad(ang)
+        ax[2].plot([x, x + 2.2 * np.cos(t)], [y, y + 2.2 * np.sin(t)],
+                   color=ENROLLED, lw=0.8, alpha=0.9)
+    ax[2].plot([p[0] for p in pts], [p[1] for p in pts], "o", ms=2.2,
+               color=ENROLLED, mec="none")
+    ax[2].set_title(f"{len(pts)} interest points,\neach with its orientation",
+                    fontsize=8)
+    for a_ in ax:
+        a_.set_xlim(-0.5, W - 0.5)
+        a_.set_ylim(H - 0.5, -0.5)
+        a_.set_xticks([])
+        a_.set_yticks([])
+
+    fig.suptitle("What the matcher is given, and what it finds in 15 mm² of skin",
+                 fontsize=9, color=ACCENT, y=0.99)
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
+    fig.savefig(f"{HERE}/features.png", dpi=160, facecolor=BG)
+    plt.close(fig)
+
+
 def main():
     bg = background()
     fig_banner(bg)
@@ -195,7 +373,11 @@ def main():
     fig_placements(bg)
     fig_matrix()
     fig_threshold(bg)
-    print("wrote banner.png, sensor.png, placements.png, matrix.png, threshold.png")
+    fig_scores()
+    fig_matchers()
+    fig_features()
+    print("wrote banner.png, sensor.png, placements.png, matrix.png, "
+          "threshold.png, scores.png, matchers.png, features.png")
     return 0
 
 
