@@ -163,6 +163,14 @@ Raising it to `0x0a`, with offset (`0x0f`) at `0x20`, makes the finger appear.
 
 </div>
 
+> **The fingerprints in this README are synthetic.** Every figure that shows
+> ridges — the banner, the one above, the placements, the interest points — is
+> drawn by `docs/figures.py` on a generated print: arcs at the sensor's
+> 8-pixel ridge period, with dislocations added to the phase to make minutiae.
+> The numbers and the plots are real measurements. A fingerprint cannot be
+> rotated like a password, so the author's was removed from this repository,
+> history included, on 2026-11-12.
+
 ## Why it does not use minutiae
 
 libfprint matches fingerprints with **bozorth3** (NBIS), which looks for minutiae
@@ -207,6 +215,9 @@ So the driver does not hand an image to libfprint. It implements its own matcher
    ![what the matcher is given and what it finds](docs/features.png)
 
    </div>
+
+   The fingerprint in this figure is synthetic. The interest points on it are
+   real: they come from the driver's matcher, compiled as it is.
 
 ### The matcher that replaced the correlation
 
@@ -587,7 +598,7 @@ Ordered by expected payoff per unit of effort:
 | Path | Contents |
 |---|---|
 | `driver/` | the driver, to be copied into a libfprint checkout |
-| `docs/` | README figures and the script that generates them from real data |
+| `docs/` | README figures and the script that generates them |
 | `capture2.py` | base library: init, commands, frame reads |
 | `capture-set.py` | records the test set (5 fingers × 3 placements) |
 | `analisi.py` | measurement protocol: enrol 1+2, verify with 3 |

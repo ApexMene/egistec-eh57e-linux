@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""Figures for the README, generated from the real captures.
+"""Figures for the README.
 
-Nothing here is an illustration: every image comes out of data/*.bin, that is,
-out of frames that actually left the sensor, and every number in the score
-figures out of the driver's own log. Regenerate with
-`python3 docs/figures.py`.
+The numbers are real: the score figures come out of the driver's own log, and
+matrix.png and threshold.png out of data/set-*.bin, frames that actually left
+the sensor.
+
+The fingerprints are not. Every figure that shows ridges - the banner,
+sensor.png, placements.png, features.png - is drawn on a synthetic print built
+by synthetic_finger() below, and says so. A fingerprint cannot be changed like
+a password, so the owner's does not belong in a public repository; it was
+there until 2026-11-12 and was removed from the history.
+
+Regenerate with `python3 docs/figures.py`.
 """
 
 import ctypes
@@ -86,18 +93,57 @@ def bandpass(p):
     return np.fft.ifft2(np.fft.fft2(p - p.mean()) * band).real
 
 
-def fig_banner(bg):
-    """README header.
+def synthetic_finger(ox=0.0, oy=0.0, seed=7, w=W, h=H):
+    """A window onto a fingerprint that belongs to nobody.
 
-    The backdrop is a real placement, tiled: it is the finger that made this
-    work, not a texture from somewhere else.
+    Ridges are the cosine of a phase: concentric arcs around a point below the
+    window, at the 8-pixel period measured on this sensor, bent by a few slow
+    sinusoids. Each arctangent term added to the phase is a dislocation, which
+    in a ridge pattern is a minutia - an ending or a bifurcation.
+
+    The finger is defined over the whole plane and (ox, oy) chooses which part
+    of it the window sees, so three offsets are three placements of the same
+    finger. Seeded, so the figures are reproducible.
+
+    Returns the ridge signal alone, roughly in [-1, 1].
     """
-    f = placement("indice-dx", 1, bg)
-    p = bandpass(f[len(f) // 2])
+    rng = np.random.default_rng(seed)
+    y, x = np.mgrid[0:h, 0:w].astype(np.float64)
+    x = x + ox
+    y = y + oy
+
+    def warp():
+        out = np.zeros_like(x)
+        for _ in range(4):
+            kx, ky = rng.uniform(-0.012, 0.012, 2)
+            out += rng.uniform(3, 7) * np.sin(2 * np.pi * (kx * x + ky * y)
+                                              + rng.uniform(0, 6.28))
+        return out
+
+    phase = 2 * np.pi / 8.0 * np.hypot(x - 25 + warp(), y - 120 + warp())
+    for _ in range(14):
+        mx, my = rng.uniform(-40, 110), rng.uniform(-40, 100)
+        phase += rng.choice((-1, 1)) * np.arctan2(y - my, x - mx)
+    return np.cos(phase)
+
+
+def synthetic_frame(ridges, seed=1):
+    """One frame as the sensor would deliver it, minus the background: the
+    ridges, a pressure gradient across the window, and noise."""
+    rng = np.random.default_rng(seed)
+    h, w = ridges.shape
+    y, x = np.mgrid[0:h, 0:w].astype(np.float64)
+    pressure = 14 * np.sin(x / w * 2.1 + 0.4) * np.cos(y / h * 1.7)
+    return 38 * ridges + pressure + rng.normal(0, 6, (h, w))
+
+
+def fig_banner():
+    """README header, on a synthetic print."""
+    p = synthetic_finger(w=W * 6, h=H * 2)
     p = (p - p.min()) / (p.max() - p.min())
 
     fig, ax = plt.subplots(figsize=(12, 3))
-    ax.imshow(np.tile(p, (2, 6)), cmap="bone", interpolation="bilinear",
+    ax.imshow(p, cmap="bone", interpolation="bilinear",
               aspect="auto", alpha=0.30)
     ax.set_xticks([])
     ax.set_yticks([])
@@ -107,7 +153,7 @@ def fig_banner(bg):
     ax.text(0.5, 0.60, "egis057e", transform=ax.transAxes, ha="center",
             va="center", fontsize=46, color="#ffffff", family="monospace",
             weight="bold")
-    ax.text(0.5, 0.30, "libfprint driver for EgisTec EH57E  ·  1c7a:057e",
+    ax.text(0.5, 0.30, "libfprint driver for EgisTec EH57E  \u00b7  1c7a:057e",
             transform=ax.transAxes, ha="center", va="center", fontsize=13,
             color=ACCENT, family="monospace")
 
@@ -116,10 +162,9 @@ def fig_banner(bg):
     plt.close(fig)
 
 
-def fig_sensor(bg):
+def fig_sensor():
     """What the sensor sees: nothing, a finger, and the finger band-passed."""
-    f = placement("indice-dx", 1, bg)
-    raw = f[len(f) // 2]
+    raw = synthetic_frame(synthetic_finger())
 
     fig, ax = plt.subplots(1, 3, figsize=(9, 2.8))
     for a, img, title in (
@@ -131,25 +176,27 @@ def fig_sensor(bg):
         a.set_xticks([])
         a.set_yticks([])
 
-    fig.suptitle("70 x 57 pixels = 4.3 x 3.6 mm of fingertip, about 400 dpi",
+    fig.suptitle("70 x 57 pixels = 4.3 x 3.6 mm of fingertip, about 400 dpi"
+                 "  \u00b7  synthetic fingerprint",
                  fontsize=9, color=ACCENT, y=0.99)
     fig.tight_layout(rect=(0, 0, 1, 0.90))
     fig.savefig(f"{HERE}/sensor.png", dpi=160, facecolor=BG)
     plt.close(fig)
 
 
-def fig_placements(bg):
+def fig_placements():
     """Three placements of one finger: how much the view changes."""
     fig, ax = plt.subplots(1, 3, figsize=(9, 2.8))
-    for i, n in enumerate((1, 2, 3)):
-        f = placement("anulare-dx", n, bg)
-        ax[i].imshow(bandpass(f[len(f) // 2]), cmap="bone",
+    for i, (ox, oy) in enumerate(((0, 0), (31, -12), (-9, 26))):
+        frame = synthetic_frame(synthetic_finger(ox, oy), seed=i)
+        ax[i].imshow(bandpass(frame), cmap="bone",
                      interpolation="nearest", aspect="equal")
-        ax[i].set_title(f"placement {n}", fontsize=8)
+        ax[i].set_title(f"placement {i + 1}", fontsize=8)
         ax[i].set_xticks([])
         ax[i].set_yticks([])
 
-    fig.suptitle("One finger, three placements, scoring 0.816 / 0.229 / 0.703."
+    fig.suptitle("One finger, three placements, two millimetres apart"
+                 "  \u00b7  synthetic fingerprint"
                  "\nThe finger does not change; which part of it touches does.",
                  fontsize=9, color=ACCENT, y=0.99)
     fig.tight_layout(rect=(0, 0, 1, 0.84))
@@ -323,16 +370,18 @@ def driver_features(image):
 
 
 def fig_features():
-    """One placement the way the matcher receives it, and what it finds."""
-    bg = np.fromfile(f"{DATA}/g01-fondo.bin",
-                     dtype=np.uint8).astype(np.float64).reshape(H, W)
-    a = np.fromfile(f"{DATA}/g01-indice-3.bin", dtype=np.uint8)
-    frames = a.reshape(-1, H, W).astype(np.float64)
-    raw = frames[150]
+    """What the matcher is given and what it finds - on a synthetic print.
 
-    # What make_image() does in the driver: forty frames averaged, background
-    # removed, mean 128 and deviation 40, eight bits.
-    avg = frames[130:170].mean(axis=0) - bg
+    The one figure here that is not a capture: a real placement with its
+    interest points drawn on it is a fingerprint published with its own
+    template. The points are still computed by the driver's matcher.
+    """
+    ridges = synthetic_finger()
+    avg = 38 * ridges
+    raw = 110 + synthetic_frame(ridges)
+
+    # What make_image() does in the driver once the frames are averaged and
+    # the background is gone: mean 128 and deviation 40, eight bits.
     img = np.clip(np.rint((avg - avg.mean()) / avg.std() * 40 + 128), 0, 255)
     img = img.astype(np.uint8)
     pts = driver_features(img)
@@ -341,7 +390,7 @@ def fig_features():
     ax[0].imshow(raw, cmap="bone", interpolation="nearest", vmin=0, vmax=255)
     ax[0].set_title("one raw frame", fontsize=8)
     ax[1].imshow(img, cmap="bone", interpolation="nearest", vmin=0, vmax=255)
-    ax[1].set_title("40 frames averaged,\nbackground removed, level fixed",
+    ax[1].set_title("frames averaged,\nbackground removed, level fixed",
                     fontsize=8)
     ax[2].imshow(img, cmap="bone", interpolation="nearest", vmin=0, vmax=255,
                  alpha=0.55)
@@ -359,7 +408,8 @@ def fig_features():
         a_.set_xticks([])
         a_.set_yticks([])
 
-    fig.suptitle("What the matcher is given, and what it finds in 15 mm² of skin",
+    fig.suptitle("What the matcher is given, and what it finds in 15 mm² of "
+                 "skin  ·  synthetic fingerprint, real matcher",
                  fontsize=9, color=ACCENT, y=0.99)
     fig.tight_layout(rect=(0, 0, 1, 0.92))
     fig.savefig(f"{HERE}/features.png", dpi=160, facecolor=BG)
@@ -368,9 +418,9 @@ def fig_features():
 
 def main():
     bg = background()
-    fig_banner(bg)
-    fig_sensor(bg)
-    fig_placements(bg)
+    fig_banner()
+    fig_sensor()
+    fig_placements()
     fig_matrix()
     fig_threshold(bg)
     fig_scores()
