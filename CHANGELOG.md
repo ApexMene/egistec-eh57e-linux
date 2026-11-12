@@ -51,7 +51,7 @@ Sessione Claude Code precedente interrotta dal limite di spesa prima di toccare 
 
 | Voce | Dettaglio | Esito |
 |---|---|---|
-| Causa del "sensore sordo" confermata | `BG_MAX_DEV = 60` era derivato da misure a gain `0x0a` (pre-commit 6204135). A gain `0x01`: vuoto dev **14.7**, dito dev **44.7** → il dito passava la guardia e veniva imparato come fondo in `dev_open` → distanza permanente ~38 > soglia 15 → `PH_WAIT_OFF` non si chiude mai | ✅ confermato con numeri |
+| Causa del "sensore sordo" confermata | `BG_MAX_DEV = 60` era derivato da misure a gain `0x0a` (pre-commit 885c567). A gain `0x01`: vuoto dev **14.7**, dito dev **44.7** → il dito passava la guardia e veniva imparato come fondo in `dev_open` → distanza permanente ~38 > soglia 15 → `PH_WAIT_OFF` non si chiude mai | ✅ confermato con numeri |
 | `BG_MAX_DEV` 60 → 30 (`egis057e.h`) | Riderivato: metà strada tra le due popolazioni misurate oggi, margine 4× la dispersione del vuoto (0.1) | ✅ |
 | Commenti soglie aggiornati (`egis057e.h`) | I vecchi numeri nel commento (idle 35.8 / finger 80.9) erano pre-fix guadagno: sostituiti con le misure 2026-08-26 | ✅ |
 | Auto-guarigione fondo (`egis057e.c`) | `PH_WAIT_OFF` conta i frame consecutivi sopra soglia: a `EGIS057E_BG_STUCK_FRAMES` (900 ≈ 10 s) ri-apprende il fondo inline (`bg_relearn`), poi torna in attesa invece di completare. Se un dito resta davvero appoggiato, la guardia dev lo scarta e il learning fallisce *rumorosamente* invece di lasciare il driver sordo per tutta la sessione | ✅ compilato, ⏳ test campo |

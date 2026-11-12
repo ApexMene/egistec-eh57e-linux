@@ -260,7 +260,7 @@
  * The distance from the background separates the two by more than a factor of
  * nine below and two above, so a threshold of 15 sits far from both. (The
  * numbers quoted in earlier revisions - idle 35.8, finger 80.9 - predate the
- * gain fix in commit 6204135 and were taken at gain 0x0a.)
+ * gain fix in commit 885c567 and were taken at gain 0x0a.)
  */
 #define EGIS057E_FINGER_THRESHOLD 15
 
